@@ -1,0 +1,49 @@
+name: Release to NuGet
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write   # mint the GitHub OIDC token for NuGet trusted publishing
+      contents: read    # required for actions/checkout once a permissions block is set
+    defaults:
+      run:
+        working-directory: src
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Setup .NET SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        global-json-file: src/global.json
+    - name: Build
+      run: dotnet build -c Release -warnaserror repo.slnx
+    - name: Test
+      run: dotnet test -c Release --no-build repo.slnx
+    - name: Pack nugets
+      run: dotnet pack -c Release --no-build Drift.Abstractions/Drift.Abstractions.csproj --output out/
+    - name: NuGet login (OIDC -> temporary API key)
+      # Exchanges the GitHub OIDC token for a short-lived (1-hour) nuget.org API
+      # key via trusted publishing — no long-lived secret. Run just before push.
+      # Pinned to a commit SHA (the v1.2.0 release) for supply-chain safety.
+      uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841  # v1.2.0
+      id: login
+      with:
+        user: ${{ secrets.NUGET_USER }}
+    - name: Push to NuGet
+      # Pass the temporary key via env (kept out of the command-line argument vector).
+      env:
+        NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+      # Resolve the package explicitly rather than relying on glob expansion.
+      # Runs in bash (the default shell on the Linux runner), relative to
+      # working-directory: src — so `out` is src/out.
+      run: |
+        package=$(find out -maxdepth 1 -name '*.nupkg' | head -n 1)
+        if [ -z "$package" ]; then echo "No .nupkg found in out/." >&2; exit 1; fi
+        if [ -z "$NUGET_API_KEY" ]; then echo "NUGET_API_KEY is empty — the NuGet login (OIDC) step may have failed." >&2; exit 1; fi
+        dotnet nuget push "$package" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
