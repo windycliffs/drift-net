@@ -8,8 +8,13 @@ public class MessageContractTests
 {
     private static readonly DateTimeOffset Timestamp = new(2026, 6, 17, 12, 0, 0, TimeSpan.Zero);
 
-    private sealed record Metadata(string MessageType, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt = null)
-        : IMessageMetadata;
+    private sealed record Metadata(
+        string MessageType,
+        DateTimeOffset CreatedAt,
+        DateTimeOffset? ExpiresAt = null,
+        string Id = "test-id",
+        string Version = "v1",
+        DateTimeOffset? InvisibleBefore = null) : IMessageMetadata;
 
     private sealed record Message<TPayload>(IMessageMetadata Metadata, TPayload Payload)
         : IMessage<TPayload>
@@ -53,5 +58,29 @@ public class MessageContractTests
         IMessage<object> covariant = derived;
 
         Assert.Equal("hello", covariant.Payload);
+    }
+
+    [Fact]
+    public void MetadataExposesIdVersionAndInvisibleBefore()
+    {
+        var invisibleBefore = Timestamp.AddSeconds(30);
+        IMessageMetadata metadata = new Metadata(
+            "order.placed",
+            Timestamp,
+            Id: "msg-1",
+            Version: "etag-4",
+            InvisibleBefore: invisibleBefore);
+
+        Assert.Equal("msg-1", metadata.Id);
+        Assert.Equal("etag-4", metadata.Version);
+        Assert.Equal(invisibleBefore, metadata.InvisibleBefore);
+    }
+
+    [Fact]
+    public void InvisibleBeforeDefaultsToNull()
+    {
+        IMessageMetadata metadata = new Metadata("heartbeat", Timestamp);
+
+        Assert.Null(metadata.InvisibleBefore);
     }
 }

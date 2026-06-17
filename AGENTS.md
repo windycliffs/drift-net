@@ -5,10 +5,10 @@ Guidance for AI agents working in this repository.
 ## What this is
 
 `Drift` is a set of .NET libraries / NuGet packages for message processing and
-work scheduling. The first package, `WindyCliffs.Drift.Abstractions` (built from
-the `Drift.Abstractions` project), defines the core abstractions the rest of the
-suite builds on. See [README.md](README.md) for an
-overview and quick start.
+work scheduling. The first package, `WindyCliffs.Drift` (built from the `Drift`
+project), defines the core contracts the rest of the suite builds on, along with
+an in-memory message queue. See [README.md](README.md) for an overview and quick
+start.
 
 ## Repository layout
 
@@ -33,8 +33,8 @@ overview and quick start.
     ├── Directory.Packages.props # Central Package Management
     ├── .editorconfig            # Code style (house style enforced)
     ├── repo.slnx                # Solution
-    ├── Drift.Abstractions/      # Production project
-    └── Drift.Abstractions.Tests/ # xunit 3 tests
+    ├── Drift/                   # Production project
+    └── Drift.Tests/             # xunit 3 tests
 ```
 
 ## Building and testing
@@ -64,7 +64,7 @@ tests must pass on every target framework.
   [CONTRIBUTING.md](CONTRIBUTING.md). Record every version change in
   `CHANGELOG.md`.
 - For a published NuGet package, the package README is
-  `src/Drift.Abstractions/README.md` (shipped in the package via
+  `src/Drift/README.md` (shipped in the package via
   `PackageReadmeFile` and rendered on nuget.org). It is **distinct from the
   repo-root `README.md`** (which targets GitHub readers). Keep it current
   whenever the public API or usage changes.

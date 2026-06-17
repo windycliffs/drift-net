@@ -5,17 +5,17 @@
          repo-wide LangVersion=latest) so this published net8.0 library can't pick up
          a newer language feature that depends on net9+ runtime/BCL types. -->
     <LangVersion>12</LangVersion>
-    <AssemblyName>WindyCliffs.Drift.Abstractions</AssemblyName>
+    <AssemblyName>WindyCliffs.Drift</AssemblyName>
     <RootNamespace>WindyCliffs.Drift</RootNamespace>
-    <Description>Core abstractions for message processing and work scheduling.</Description>
+    <Description>Message processing and work scheduling for .NET — core contracts and an in-memory message queue.</Description>
   </PropertyGroup>
 
   <!-- Publishable NuGet package. Shared metadata/quality come from Directory.Build.props. -->
   <PropertyGroup>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
-    <PackageId>WindyCliffs.Drift.Abstractions</PackageId>
+    <PackageId>WindyCliffs.Drift</PackageId>
     <PackageVersion>$(Version)</PackageVersion>
-    <PackageTags>messaging;message-processing;scheduling;work-scheduling;abstractions</PackageTags>
+    <PackageTags>messaging;message-processing;message-queue;scheduling;work-scheduling</PackageTags>
     <!-- README is library-project-relative, so it lives in the csproj, not Directory.Build.props. -->
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>

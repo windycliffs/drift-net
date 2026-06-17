@@ -14,6 +14,6 @@
     <PackageReference Include="coverlet.collector" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Drift.Abstractions\Drift.Abstractions.csproj" />
+    <ProjectReference Include="..\Drift\Drift.csproj" />
   </ItemGroup>
 </Project>
