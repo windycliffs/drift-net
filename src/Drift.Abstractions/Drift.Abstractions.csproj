@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>WindyCliffs.Drift.Abstractions</AssemblyName>
+    <RootNamespace>WindyCliffs.Drift</RootNamespace>
+    <Description>Core abstractions for message processing and work scheduling.</Description>
+  </PropertyGroup>
+
+  <!-- Publishable NuGet package. Shared metadata/quality come from Directory.Build.props. -->
+  <PropertyGroup>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <PackageId>WindyCliffs.Drift.Abstractions</PackageId>
+    <PackageVersion>$(Version)</PackageVersion>
+    <PackageTags>messaging;message-processing;scheduling;work-scheduling;abstractions</PackageTags>
+    <!-- README is library-project-relative, so it lives in the csproj, not Directory.Build.props. -->
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

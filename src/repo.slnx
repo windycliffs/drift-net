@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Drift.Abstractions/Drift.Abstractions.csproj" />
+  <Project Path="Drift.Abstractions.Tests/Drift.Abstractions.Tests.csproj" />
+</Solution>

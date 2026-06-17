@@ -1,0 +1,31 @@
+<Project>
+  <PropertyGroup>
+    <!-- Shared package/assembly metadata. -->
+    <Product>Drift</Product>
+    <Company>Windy Cliffs</Company>
+    <Authors>Windy Cliffs</Authors>
+    <Copyright>Copyright © 2026 Windy Cliffs</Copyright>
+    <Description>Message processing and work scheduling libraries for .NET.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/windycliffs/drift-net</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/windycliffs/drift-net</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+
+    <!-- Version assembled from parts; bump per CONTRIBUTING.md. Seeded at 0.1.0. -->
+    <MajorVersion>0</MajorVersion>
+    <MinorVersion>1</MinorVersion>
+    <Revision>0</Revision>
+    <Version>$(MajorVersion).$(MinorVersion).$(Revision)</Version>
+    <AssemblyVersion>$(MajorVersion).0.0.0</AssemblyVersion>
+    <FileVersion>$(Version).0</FileVersion>
+
+    <!-- Quality gates (kept centralized; do NOT move to the csproj — the
+         dotnet-build/dotnet-review skills rely on TreatWarningsAsErrors here). -->
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+</Project>
