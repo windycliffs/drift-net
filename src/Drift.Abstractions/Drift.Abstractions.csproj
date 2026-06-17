@@ -1,6 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
+    <!-- C# 12 is the language version shipped with .NET 8 — pin it (overriding the
+         repo-wide LangVersion=latest) so this published net8.0 library can't pick up
+         a newer language feature that depends on net9+ runtime/BCL types. -->
+    <LangVersion>12</LangVersion>
     <AssemblyName>WindyCliffs.Drift.Abstractions</AssemblyName>
     <RootNamespace>WindyCliffs.Drift</RootNamespace>
     <Description>Core abstractions for message processing and work scheduling.</Description>

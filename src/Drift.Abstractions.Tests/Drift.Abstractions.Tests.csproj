@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <RootNamespace>WindyCliffs.Drift.Tests</RootNamespace>
     <!-- xunit v3 test projects are self-executing console apps. -->
     <OutputType>Exe</OutputType>
