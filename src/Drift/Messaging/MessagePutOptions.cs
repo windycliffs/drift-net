@@ -1,11 +1,12 @@
 namespace WindyCliffs.Drift.Messaging;
 
 using System;
+using System.Collections.Generic;
 
 /// <summary>
 /// Options supplied when putting a payload into an <see cref="IMessageQueue{TPayload}"/>.
-/// The queue assigns the message identity (<see cref="IMessageMetadata.Id"/>,
-/// <see cref="IMessageMetadata.Version"/>, <see cref="IMessageMetadata.CreatedAt"/>).
+/// The caller supplies the <see cref="IMessageMetadata.Id"/>; the queue assigns the
+/// <see cref="IMessageMetadata.Version"/> and <see cref="IMessageMetadata.CreatedAt"/>.
 /// </summary>
 /// <param name="MessageType">
 /// The message-type discriminator stored on <see cref="IMessageMetadata.MessageType"/>.
@@ -14,6 +15,8 @@ using System;
 /// <exception cref="ArgumentException"><paramref name="MessageType"/> is null or empty.</exception>
 public sealed record MessagePutOptions(string MessageType)
 {
+    private readonly IReadOnlyList<string> tags = [];
+
     /// <summary>The message-type discriminator. Must be non-empty.</summary>
     public string MessageType { get; init; } = NonEmpty(MessageType);
 
@@ -30,9 +33,25 @@ public sealed record MessagePutOptions(string MessageType)
     /// </summary>
     public DateTimeOffset? InvisibleBefore { get; init; }
 
+    /// <summary>
+    /// Non-null labels attached to the message, stored on <see cref="IMessageMetadata.Tags"/>.
+    /// Defaults to an empty list. Must not contain null elements.
+    /// </summary>
+    public IReadOnlyList<string> Tags
+    {
+        get => this.tags;
+        init => this.tags = NonNullTags(value);
+    }
+
     private static string NonEmpty(string messageType)
     {
         ArgumentException.ThrowIfNullOrEmpty(messageType);
         return messageType;
+    }
+
+    private static IReadOnlyList<string> NonNullTags(IReadOnlyList<string> tags)
+    {
+        ArgumentNullException.ThrowIfNull(tags);
+        return TagValidation.EnsureNoNullElements(tags, nameof(tags))!;
     }
 }

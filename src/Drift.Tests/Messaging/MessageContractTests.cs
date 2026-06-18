@@ -1,6 +1,7 @@
 namespace WindyCliffs.Drift.Tests.Messaging;
 
 using System;
+using System.Collections.Generic;
 using WindyCliffs.Drift.Messaging;
 using Xunit;
 
@@ -14,7 +15,11 @@ public class MessageContractTests
         DateTimeOffset? ExpiresAt = null,
         string Id = "test-id",
         string Version = "v1",
-        DateTimeOffset? InvisibleBefore = null) : IMessageMetadata;
+        DateTimeOffset? InvisibleBefore = null,
+        DateTimeOffset LastModifiedAt = default) : IMessageMetadata
+    {
+        public IReadOnlyList<string> Tags { get; init; } = [];
+    }
 
     private sealed record Message<TPayload>(IMessageMetadata Metadata, TPayload Payload)
         : IMessage<TPayload>

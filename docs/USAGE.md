@@ -21,10 +21,11 @@ A **message** carries **metadata** and a **payload**:
 - **Metadata** (`IMessageMetadata`) is the information consumed by the generic
   processing layer, independent of the payload type. It carries the identifier
   (`Id`), the message type (`MessageType`), an opaque concurrency token
-  (`Version`, for example a storage ETag), the creation time (`CreatedAt`), an
-  optional expiration time (`ExpiresAt`, `null` when the message does not
-  expire), and an optional visibility time (`InvisibleBefore`, `null` when the
-  message is visible immediately).
+  (`Version`, for example a storage ETag), the creation time (`CreatedAt`), the
+  last-modified time (`LastModifiedAt`), an optional expiration time (`ExpiresAt`,
+  `null` when the message does not expire), an optional visibility time
+  (`InvisibleBefore`, `null` when the message is visible immediately), and
+  free-form `Tags`.
 - **Payload** is the information consumed by specific message-processor
   implementations, exposed as the covariant `TPayload` on `IMessage<out TPayload>`.
 
@@ -45,25 +46,27 @@ layer can handle any message without knowing its payload type.
 
 `IMessageQueue<TPayload>` is a worker queue over messages:
 
-- `PutAsync(payload, options)` enqueues a payload; the queue assigns the
-  identity (`Id`, `Version`, `CreatedAt`) and returns the stored message.
-- `TakeAsync(count)` reads up to `count` currently-visible messages. This is a
-  non-exclusive, non-destructive read — two callers may see the same message.
+- `PutAsync(id, payload, options)` enqueues a payload under a caller-supplied id;
+  the queue assigns the `Version` and `CreatedAt` and returns the stored message.
+- `TryGetAsync(id)` reads a message by id (regardless of visibility), or `null`.
+- `TakeAsync(count)` reads up to `count` currently-visible messages in insertion
+  order. This is a non-exclusive, non-destructive read — two callers may see the
+  same message.
 - `LeaseAsync(message, leaseDuration)` claims a message for exclusive
   processing, returning an `IMessageLease<TPayload>` or `null` if it could not be
   claimed.
 - `EstimateCountAsync()` returns an approximate message count.
 
 The lease (an `IAsyncDisposable`) carries the operations that are valid only
-while the message is held — `UpdateAsync`, `ReleaseAsync`, and `RemoveAsync`.
-Disposing the lease releases it if it is still held.
+while the message is held — `UpdateAsync`, `RenewAsync`, `ReleaseAsync`, and
+`RemoveAsync`. Disposing the lease releases it if it is still held.
 
 ```csharp
 using WindyCliffs.Drift.Messaging;
 
 IMessageQueue<OrderPlaced> queue = new InMemoryMessageQueue<OrderPlaced>();
 
-await queue.PutAsync(order, new MessagePutOptions("order.placed"));
+await queue.PutAsync(order.Id, order, new MessagePutOptions("order.placed"));
 
 foreach (var candidate in await queue.TakeAsync(10))
 {
@@ -79,4 +82,7 @@ foreach (var candidate in await queue.TakeAsync(10))
 ```
 
 `InMemoryMessageQueue<TPayload>` is a non-durable, single-process implementation
-of `IMessageQueue<TPayload>` suitable for tests and local development.
+of `IMessageQueue<TPayload>` suitable for tests and local development. It reads
+time from `SystemClock.Instance` by default; pass an `IClock` (from the
+`WindyCliffs.Clock` package) — for example a `MockClock` — to control time in
+tests.

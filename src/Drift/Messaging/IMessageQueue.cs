@@ -15,20 +15,31 @@ public interface IMessageQueue<TPayload>
     where TPayload : notnull
 {
     /// <summary>
-    /// Puts a payload into the queue. The queue assigns the message identity
-    /// (<see cref="IMessageMetadata.Id"/>, an initial <see cref="IMessageMetadata.Version"/>,
-    /// and <see cref="IMessageMetadata.CreatedAt"/>) and returns the stored message.
+    /// Puts a payload into the queue under the caller-supplied <paramref name="id"/>.
+    /// The queue assigns the initial <see cref="IMessageMetadata.Version"/> and
+    /// <see cref="IMessageMetadata.CreatedAt"/> and returns the stored message.
     /// </summary>
+    /// <param name="id">The unique identifier for the message. Must be non-empty.</param>
     /// <param name="payload">The payload to enqueue.</param>
-    /// <param name="options">Metadata supplied by the caller (message type, expiry, initial visibility).</param>
+    /// <param name="options">Metadata supplied by the caller (message type, expiry, initial visibility, tags).</param>
     /// <param name="ct">A token to cancel the operation.</param>
-    Task<IMessage<TPayload>> PutAsync(TPayload payload, MessagePutOptions options, CancellationToken ct = default);
+    /// <exception cref="ArgumentException"><paramref name="id"/> is null or empty.</exception>
+    /// <exception cref="InvalidOperationException">A message with <paramref name="id"/> already exists.</exception>
+    Task<IMessage<TPayload>> PutAsync(string id, TPayload payload, MessagePutOptions options, CancellationToken ct = default);
 
     /// <summary>
-    /// Reads up to <paramref name="count"/> currently-visible messages. This is a
-    /// non-exclusive, non-destructive read: it does not claim the messages, so two
-    /// callers may receive the same message. Call <see cref="LeaseAsync"/> to claim
-    /// a message for exclusive processing.
+    /// Reads the message with the given <paramref name="id"/>, regardless of its
+    /// visibility, or <see langword="null"/> when no such message exists.
+    /// </summary>
+    /// <param name="id">The identifier of the message to read.</param>
+    /// <param name="ct">A token to cancel the operation.</param>
+    Task<IMessage<TPayload>?> TryGetAsync(string id, CancellationToken ct = default);
+
+    /// <summary>
+    /// Reads up to <paramref name="count"/> currently-visible messages in insertion
+    /// order. This is a non-exclusive, non-destructive read: it does not claim the
+    /// messages, so two callers may receive the same message. Call
+    /// <see cref="LeaseAsync"/> to claim a message for exclusive processing.
     /// </summary>
     /// <param name="count">The maximum number of messages to return; must be greater than zero.</param>
     /// <param name="ct">A token to cancel the operation.</param>
@@ -41,8 +52,9 @@ public interface IMessageQueue<TPayload>
     /// changes.
     /// </summary>
     /// <param name="message">The message to claim, typically obtained from <see cref="TakeAsync"/>.</param>
-    /// <param name="leaseDuration">How long the lease is held before it expires.</param>
+    /// <param name="leaseDuration">How long the lease is held before it expires. Must be positive.</param>
     /// <param name="ct">A token to cancel the operation.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="leaseDuration"/> is not positive.</exception>
     /// <returns>
     /// A lease, or <see langword="null"/> when the message could not be claimed —
     /// unknown or foreign id, a stale snapshot (its <see cref="IMessageMetadata.Version"/>

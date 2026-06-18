@@ -2,52 +2,51 @@ namespace WindyCliffs.Drift.Messaging;
 
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using WindyCliffs.Clock;
 
 /// <summary>
-/// An in-process <see cref="IMessageQueue{TPayload}"/> backed by an in-memory
-/// dictionary. Suitable for tests, local development, and single-process
-/// scenarios; state is not durable and does not survive a process restart.
-/// Thread-safe via a single lock.
+/// An in-process <see cref="IMessageQueue{TPayload}"/> backed by an in-memory,
+/// insertion-ordered store. Suitable for tests, local development, and
+/// single-process scenarios; state is not durable and does not survive a process
+/// restart. Thread-safe.
 /// </summary>
 /// <typeparam name="TPayload">The payload type carried by the queued messages.</typeparam>
-public sealed class InMemoryMessageQueue<TPayload>(Func<DateTimeOffset> clock) : IMessageQueue<TPayload>
+public sealed class InMemoryMessageQueue<TPayload>(IClock clock) : IMessageQueue<TPayload>
     where TPayload : notnull
 {
-    private readonly object gate = new();
-    private readonly Dictionary<string, Entry> entries = new();
-    private readonly Func<DateTimeOffset> clock = clock ?? throw new ArgumentNullException(nameof(clock));
-    private long nextId;
-    private long nextVersion;
+    private readonly IClock clock = clock ?? throw new ArgumentNullException(nameof(clock));
+    private readonly OrderedConcurrentDictionary<string, Entry> store = new();
 
-    /// <summary>Creates a queue that reads the current time from the system UTC clock.</summary>
+    /// <summary>Creates a queue that reads the current time from <see cref="SystemClock.Instance"/>.</summary>
     public InMemoryMessageQueue()
-        : this(static () => DateTimeOffset.UtcNow)
+        : this(SystemClock.Instance)
     {
     }
 
     /// <inheritdoc />
-    public Task<IMessage<TPayload>> PutAsync(TPayload payload, MessagePutOptions options, CancellationToken ct = default)
+    public Task<IMessage<TPayload>> PutAsync(string id, TPayload payload, MessagePutOptions options, CancellationToken ct = default)
     {
-        lock (this.gate)
+        ArgumentException.ThrowIfNullOrEmpty(id);
+        ArgumentNullException.ThrowIfNull(options);
+
+        var now = this.clock.UtcNow;
+        var entry = new Entry(id, options.MessageType, NewVersion(), now, now, options.ExpiresAt, options.InvisibleBefore, options.Tags, payload, null);
+        if (!this.store.TryAdd(id, entry))
         {
-            var id = "msg-" + (++this.nextId).ToString(CultureInfo.InvariantCulture);
-            var entry = new Entry
-            {
-                Id = id,
-                MessageType = options.MessageType,
-                CreatedAt = this.clock(),
-                Payload = payload,
-                Version = this.NewVersion(),
-                ExpiresAt = options.ExpiresAt,
-                InvisibleBefore = options.InvisibleBefore,
-            };
-            this.entries[id] = entry;
-            return Task.FromResult(Snapshot(entry));
+            throw new InvalidOperationException($"A message with id '{id}' already exists.");
         }
+
+        return Task.FromResult(Snapshot(entry));
+    }
+
+    /// <inheritdoc />
+    public Task<IMessage<TPayload>?> TryGetAsync(string id, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(id);
+        return Task.FromResult<IMessage<TPayload>?>(this.store.TryGetValue(id, out var entry) ? Snapshot(entry) : null);
     }
 
     /// <inheritdoc />
@@ -58,53 +57,50 @@ public sealed class InMemoryMessageQueue<TPayload>(Func<DateTimeOffset> clock) :
             throw new ArgumentOutOfRangeException(nameof(count), count, "Count must be greater than zero.");
         }
 
-        lock (this.gate)
-        {
-            var now = this.clock();
-            IReadOnlyList<IMessage<TPayload>> visible = this.entries.Values
-                .Where(e => IsVisible(e, now))
-                .Take(count)
-                .Select(Snapshot)
-                .ToList();
-            return Task.FromResult(visible);
-        }
+        var now = this.clock.UtcNow;
+        IReadOnlyList<IMessage<TPayload>> visible = this.store
+            .Take(e => IsVisible(e, now), count)
+            .Select(Snapshot)
+            .ToList();
+        return Task.FromResult(visible);
     }
 
     /// <inheritdoc />
     public Task<IMessageLease<TPayload>?> LeaseAsync(IMessage<TPayload> message, TimeSpan leaseDuration, CancellationToken ct = default)
     {
-        lock (this.gate)
-        {
-            var now = this.clock();
-            if (!this.entries.TryGetValue(message.Metadata.Id, out var entry)
-                || entry.Version != message.Metadata.Version
-                || !IsVisible(entry, now))
-            {
-                // Unknown/foreign id, a stale snapshot (the message has since changed),
-                // or the message is currently invisible — cannot be claimed.
-                return Task.FromResult<IMessageLease<TPayload>?>(null);
-            }
+        ArgumentNullException.ThrowIfNull(message);
+        ThrowIfNonPositive(leaseDuration);
 
-            var token = Guid.NewGuid();
-            var leasedUntil = now + leaseDuration;
-            entry.LeaseToken = token;
-            entry.InvisibleBefore = leasedUntil;
-            entry.Version = this.NewVersion();
-            IMessageLease<TPayload> lease = new Lease(this, entry.Id, token, Snapshot(entry), leasedUntil);
+        var now = this.clock.UtcNow;
+        var leasedUntil = now + leaseDuration;
+        var token = Guid.NewGuid();
+        if (this.store.TryUpdate(
+                message.Metadata.Id,
+                e => e.Version == message.Metadata.Version && IsVisible(e, now)
+                    ? e with { LeaseToken = token, InvisibleBefore = leasedUntil, Version = NewVersion(), LastModifiedAt = now }
+                    : null,
+                out var leased))
+        {
+            IMessageLease<TPayload> lease = new Lease(this, leased.Id, token, Snapshot(leased), leasedUntil);
             return Task.FromResult<IMessageLease<TPayload>?>(lease);
         }
+
+        // Unknown/foreign id, a stale snapshot, or currently invisible — cannot be claimed.
+        return Task.FromResult<IMessageLease<TPayload>?>(null);
     }
 
     /// <inheritdoc />
-    public Task<long> EstimateCountAsync(CancellationToken ct = default)
+    public Task<long> EstimateCountAsync(CancellationToken ct = default) => Task.FromResult((long)this.store.Count);
+
+    private static string NewVersion() => Guid.NewGuid().ToString("n");
+
+    private static void ThrowIfNonPositive(TimeSpan leaseDuration)
     {
-        lock (this.gate)
+        if (leaseDuration <= TimeSpan.Zero)
         {
-            return Task.FromResult((long)this.entries.Count);
+            throw new ArgumentOutOfRangeException(nameof(leaseDuration), leaseDuration, "Lease duration must be positive.");
         }
     }
-
-    private string NewVersion() => "v" + (++this.nextVersion).ToString(CultureInfo.InvariantCulture);
 
     private static bool IsVisible(Entry e, DateTimeOffset now) =>
         (e.InvisibleBefore is null || now >= e.InvisibleBefore)
@@ -112,35 +108,30 @@ public sealed class InMemoryMessageQueue<TPayload>(Func<DateTimeOffset> clock) :
 
     private static IMessage<TPayload> Snapshot(Entry e) =>
         new MessageSnapshot(
-            new MetadataSnapshot(e.Id, e.MessageType, e.Version, e.CreatedAt, e.ExpiresAt, e.InvisibleBefore),
+            new MetadataSnapshot(e.Id, e.MessageType, e.Version, e.CreatedAt, e.LastModifiedAt, e.ExpiresAt, e.InvisibleBefore, e.Tags),
             e.Payload);
 
-    private sealed class Entry
-    {
-        public required string Id { get; init; }
-
-        public required string MessageType { get; init; }
-
-        public required DateTimeOffset CreatedAt { get; init; }
-
-        public required TPayload Payload { get; set; }
-
-        public required string Version { get; set; }
-
-        public DateTimeOffset? ExpiresAt { get; set; }
-
-        public DateTimeOffset? InvisibleBefore { get; set; }
-
-        public Guid? LeaseToken { get; set; }
-    }
+    private sealed record Entry(
+        string Id,
+        string MessageType,
+        string Version,
+        DateTimeOffset CreatedAt,
+        DateTimeOffset LastModifiedAt,
+        DateTimeOffset? ExpiresAt,
+        DateTimeOffset? InvisibleBefore,
+        IReadOnlyList<string> Tags,
+        TPayload Payload,
+        Guid? LeaseToken);
 
     private sealed record MetadataSnapshot(
         string Id,
         string MessageType,
         string Version,
         DateTimeOffset CreatedAt,
+        DateTimeOffset LastModifiedAt,
         DateTimeOffset? ExpiresAt,
-        DateTimeOffset? InvisibleBefore) : IMessageMetadata;
+        DateTimeOffset? InvisibleBefore,
+        IReadOnlyList<string> Tags) : IMessageMetadata;
 
     private sealed record MessageSnapshot(IMessageMetadata Metadata, TPayload Payload) : IMessage<TPayload>;
 
@@ -154,39 +145,53 @@ public sealed class InMemoryMessageQueue<TPayload>(Func<DateTimeOffset> clock) :
         private readonly InMemoryMessageQueue<TPayload> queue = queue;
         private readonly string id = id;
         private readonly Guid token = token;
-        private bool held = true;
 
         public IMessage<TPayload> Message { get; private set; } = message;
 
-        public DateTimeOffset LeasedUntil { get; } = leasedUntil;
+        public DateTimeOffset LeasedUntil { get; private set; } = leasedUntil;
 
         public Task UpdateAsync(MessageUpdate<TPayload> update, CancellationToken ct = default)
         {
-            lock (this.queue.gate)
-            {
-                var entry = this.RequireHeld();
-                entry.Payload = update.Payload;
-                if (update.ExpiresAt is not null)
-                {
-                    entry.ExpiresAt = update.ExpiresAt;
-                }
+            ArgumentNullException.ThrowIfNull(update);
 
-                entry.Version = this.queue.NewVersion();
-                this.Message = Snapshot(entry);
+            var now = this.queue.clock.UtcNow;
+            if (!this.queue.store.TryUpdate(this.id, e => this.IsHeldBy(e, now) ? Apply(e, update, now) : null, out var updated))
+            {
+                throw NotHeld();
             }
 
+            this.Message = Snapshot(updated);
+            return Task.CompletedTask;
+        }
+
+        public Task RenewAsync(TimeSpan leaseDuration, CancellationToken ct = default)
+        {
+            ThrowIfNonPositive(leaseDuration);
+
+            var now = this.queue.clock.UtcNow;
+            var leasedUntil = now + leaseDuration;
+            if (!this.queue.store.TryUpdate(
+                    this.id,
+                    e => this.IsHeldBy(e, now) ? e with { InvisibleBefore = leasedUntil, Version = NewVersion(), LastModifiedAt = now } : null,
+                    out var updated))
+            {
+                throw NotHeld();
+            }
+
+            this.LeasedUntil = leasedUntil;
+            this.Message = Snapshot(updated);
             return Task.CompletedTask;
         }
 
         public Task ReleaseAsync(CancellationToken ct = default)
         {
-            lock (this.queue.gate)
+            var now = this.queue.clock.UtcNow;
+            if (!this.queue.store.TryUpdate(
+                    this.id,
+                    e => this.IsHeldBy(e, now) ? e with { LeaseToken = null, InvisibleBefore = null, Version = NewVersion(), LastModifiedAt = now } : null,
+                    out _))
             {
-                var entry = this.RequireHeld();
-                entry.InvisibleBefore = null;
-                entry.LeaseToken = null;
-                entry.Version = this.queue.NewVersion();
-                this.held = false;
+                throw NotHeld();
             }
 
             return Task.CompletedTask;
@@ -194,11 +199,10 @@ public sealed class InMemoryMessageQueue<TPayload>(Func<DateTimeOffset> clock) :
 
         public Task RemoveAsync(CancellationToken ct = default)
         {
-            lock (this.queue.gate)
+            var now = this.queue.clock.UtcNow;
+            if (!this.queue.store.RemoveIf(this.id, e => this.IsHeldBy(e, now)))
             {
-                _ = this.RequireHeld();
-                this.queue.entries.Remove(this.id);
-                this.held = false;
+                throw NotHeld();
             }
 
             return Task.CompletedTask;
@@ -206,37 +210,28 @@ public sealed class InMemoryMessageQueue<TPayload>(Func<DateTimeOffset> clock) :
 
         public ValueTask DisposeAsync()
         {
-            lock (this.queue.gate)
-            {
-                if (this.held
-                    && this.queue.clock() < this.LeasedUntil
-                    && this.queue.entries.TryGetValue(this.id, out var entry)
-                    && entry.LeaseToken == this.token)
-                {
-                    entry.InvisibleBefore = null;
-                    entry.LeaseToken = null;
-                    entry.Version = this.queue.NewVersion();
-                }
-
-                this.held = false;
-            }
-
+            // Idempotent safety net: release the lease if it is still held, else no-op.
+            var now = this.queue.clock.UtcNow;
+            _ = this.queue.store.TryUpdate(
+                this.id,
+                e => this.IsHeldBy(e, now) ? e with { LeaseToken = null, InvisibleBefore = null, Version = NewVersion(), LastModifiedAt = now } : null,
+                out _);
             return ValueTask.CompletedTask;
         }
 
-        private Entry RequireHeld()
-        {
-            if (!this.held || this.queue.clock() >= this.LeasedUntil)
-            {
-                throw new InvalidOperationException("The lease is no longer held.");
-            }
+        private static InvalidOperationException NotHeld() => new("The lease is no longer held.");
 
-            if (!this.queue.entries.TryGetValue(this.id, out var entry) || entry.LeaseToken != this.token)
+        private static Entry Apply(Entry entry, MessageUpdate<TPayload> update, DateTimeOffset now) =>
+            entry with
             {
-                throw new InvalidOperationException("The lease is no longer held.");
-            }
+                Payload = update.Payload is { } payload ? payload : entry.Payload,
+                ExpiresAt = update.ExpiresAt ?? entry.ExpiresAt,
+                InvisibleBefore = update.InvisibleBefore ?? entry.InvisibleBefore,
+                Tags = update.Tags ?? entry.Tags,
+                Version = NewVersion(),
+                LastModifiedAt = now,
+            };
 
-            return entry;
-        }
+        private bool IsHeldBy(Entry entry, DateTimeOffset now) => entry.LeaseToken == this.token && now < this.LeasedUntil;
     }
 }

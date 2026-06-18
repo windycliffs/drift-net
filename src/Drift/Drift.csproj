@@ -22,4 +22,9 @@
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
+
+  <!-- IClock abstraction used by InMemoryMessageQueue (default SystemClock.Instance). -->
+  <ItemGroup>
+    <PackageReference Include="WindyCliffs.Clock" />
+  </ItemGroup>
 </Project>
