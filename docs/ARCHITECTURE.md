@@ -50,5 +50,8 @@ releasing makes it visible again; renewing extends the window.
 used for tests and local development. It reads time through the `IClock`
 abstraction (from the `WindyCliffs.Clock` package, defaulting to
 `SystemClock.Instance`), and keeps its state in an internal
-`OrderedConcurrentDictionary` — a thread-safe, key-addressable, insertion-ordered
-store — so the queue type itself only carries the queue semantics.
+`SortedConcurrentDictionary` — a thread-safe, key-addressable store that keeps its
+values in the order of an injected comparer — so the queue type itself only carries
+the queue semantics. The queue orders messages by `LastModifiedAt`
+(least-recently-modified first), so leasing, updating, or releasing a message moves
+it to the back of the line.

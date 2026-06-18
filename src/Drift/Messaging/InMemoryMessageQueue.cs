@@ -8,17 +8,25 @@ using System.Threading.Tasks;
 using WindyCliffs.Clock;
 
 /// <summary>
-/// An in-process <see cref="IMessageQueue{TPayload}"/> backed by an in-memory,
-/// insertion-ordered store. Suitable for tests, local development, and
-/// single-process scenarios; state is not durable and does not survive a process
-/// restart. Thread-safe.
+/// An in-process <see cref="IMessageQueue{TPayload}"/> backed by an in-memory store
+/// ordered by <see cref="IMessageMetadata.LastModifiedAt"/> (least-recently-modified
+/// first). Suitable for tests, local development, and single-process scenarios;
+/// state is not durable and does not survive a process restart. Thread-safe.
 /// </summary>
 /// <typeparam name="TPayload">The payload type carried by the queued messages.</typeparam>
 public sealed class InMemoryMessageQueue<TPayload>(IClock clock) : IMessageQueue<TPayload>
     where TPayload : notnull
 {
+    // Orders messages by last-modified time (oldest first), breaking ties by id so the
+    // comparer is a total order over distinct messages.
+    private static readonly IComparer<Entry> ByLastModified = Comparer<Entry>.Create(static (a, b) =>
+    {
+        var byTime = a.LastModifiedAt.CompareTo(b.LastModifiedAt);
+        return byTime != 0 ? byTime : string.CompareOrdinal(a.Id, b.Id);
+    });
+
     private readonly IClock clock = clock ?? throw new ArgumentNullException(nameof(clock));
-    private readonly OrderedConcurrentDictionary<string, Entry> store = new();
+    private readonly SortedConcurrentDictionary<string, Entry> store = new(ByLastModified);
 
     /// <summary>Creates a queue that reads the current time from <see cref="SystemClock.Instance"/>.</summary>
     public InMemoryMessageQueue()

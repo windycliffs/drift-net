@@ -13,6 +13,8 @@ public class MessageQueueContractTests
     private static readonly string[] RedUrgent = ["red", "urgent"];
     private static readonly string[] Ids12 = ["1", "2"];
     private static readonly string[] Archived = ["archived"];
+    private static readonly string[] Ab = ["a", "b"];
+    private static readonly string[] Ba = ["b", "a"];
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -85,9 +87,10 @@ public class MessageQueueContractTests
     }
 
     [Fact]
-    public async Task TakeReturnsUpToCountInInsertionOrderAndIsNonExclusive()
+    public async Task TakeReturnsUpToCountInSortedOrderAndIsNonExclusive()
     {
         var (queue, _) = CreateQueue();
+        // Put at the same instant, so they sort by the id tie-breaker: 1, 2, 3.
         await queue.PutAsync("1", "a", new MessagePutOptions("t"), Ct);
         await queue.PutAsync("2", "b", new MessagePutOptions("t"), Ct);
         await queue.PutAsync("3", "c", new MessagePutOptions("t"), Ct);
@@ -97,6 +100,26 @@ public class MessageQueueContractTests
 
         // Non-destructive read: a second Take still sees the same messages.
         Assert.Equal(3, (await queue.TakeAsync(10, Ct)).Count);
+    }
+
+    [Fact]
+    public async Task TakeOrdersByLastModifiedSoTouchedMessagesMoveToTheEnd()
+    {
+        var (queue, clock) = CreateQueue();
+        await queue.PutAsync("a", "a", new MessagePutOptions("t"), Ct);
+        Advance(clock, TimeSpan.FromMinutes(1));
+        await queue.PutAsync("b", "b", new MessagePutOptions("t"), Ct);
+
+        Assert.Equal(Ab, (await queue.TakeAsync(10, Ct)).Select(m => m.Metadata.Id));
+
+        // Touch "a" (lease + release) so its LastModifiedAt becomes the most recent.
+        Advance(clock, TimeSpan.FromMinutes(1));
+        var a = (await queue.TakeAsync(10, Ct)).First(m => m.Metadata.Id == "a");
+        var lease = await queue.LeaseAsync(a, TimeSpan.FromMinutes(5), Ct);
+        Assert.NotNull(lease);
+        await lease.ReleaseAsync(Ct);
+
+        Assert.Equal(Ba, (await queue.TakeAsync(10, Ct)).Select(m => m.Metadata.Id));
     }
 
     [Fact]
