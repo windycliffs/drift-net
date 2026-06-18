@@ -4,12 +4,12 @@ using System;
 using System.Collections.Generic;
 
 /// <summary>
-/// Options supplied when putting a payload into an <see cref="IMessageQueue{TPayload}"/>.
-/// The caller supplies the <see cref="IMessageMetadata.Id"/>; the queue assigns the
-/// <see cref="IMessageMetadata.Version"/> and <see cref="IMessageMetadata.CreatedAt"/>.
+/// Options supplied when putting a payload into an <see cref="IMessageQueue"/>.
+/// The caller supplies the <see cref="IMessage.Id"/>; the queue assigns the
+/// <see cref="IMessage.Version"/> and <see cref="IMessage.CreatedAt"/>.
 /// </summary>
 /// <param name="MessageType">
-/// The message-type discriminator stored on <see cref="IMessageMetadata.MessageType"/>.
+/// The message-type discriminator stored on <see cref="IMessage.MessageType"/>.
 /// Must be non-empty.
 /// </param>
 /// <exception cref="ArgumentException"><paramref name="MessageType"/> is null or empty.</exception>
@@ -22,19 +22,19 @@ public sealed record MessagePutOptions(string MessageType)
 
     /// <summary>
     /// The instant after which the message expires, or <see langword="null"/> when
-    /// the message does not expire. Stored on <see cref="IMessageMetadata.ExpiresAt"/>.
+    /// the message does not expire. Stored on <see cref="IMessage.ExpiresAt"/>.
     /// </summary>
     public DateTimeOffset? ExpiresAt { get; init; }
 
     /// <summary>
     /// The instant before which the message is invisible to consumers (an initial
     /// delay or scheduled-delivery time), or <see langword="null"/> to make the
-    /// message visible immediately. Stored on <see cref="IMessageMetadata.InvisibleBefore"/>.
+    /// message visible immediately. Stored on <see cref="IMessage.InvisibleBefore"/>.
     /// </summary>
     public DateTimeOffset? InvisibleBefore { get; init; }
 
     /// <summary>
-    /// Non-null labels attached to the message, stored on <see cref="IMessageMetadata.Tags"/>.
+    /// Non-null labels attached to the message, stored on <see cref="IMessage.Tags"/>.
     /// Defaults to an empty list. Must not contain null elements.
     /// </summary>
     public IReadOnlyList<string> Tags

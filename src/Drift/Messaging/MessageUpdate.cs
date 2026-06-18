@@ -4,25 +4,14 @@ using System;
 using System.Collections.Generic;
 
 /// <summary>
-/// Describes a change to a leased message applied through
-/// <see cref="IMessageLease{TPayload}.UpdateAsync"/>. Every field is optional: a
-/// field left <see langword="null"/> leaves the corresponding part of the message
-/// unchanged.
+/// Describes a change to a leased message's properties applied through
+/// <see cref="IMessageLease.UpdateAsync(MessageUpdate, CancellationToken)"/> (or its
+/// payload-bearing overload). Every field is optional: a field left
+/// <see langword="null"/> leaves the corresponding part of the message unchanged.
 /// </summary>
-/// <remarks>
-/// Payloads are expected to be reference types; <see langword="null"/> is the
-/// sentinel for "payload unchanged". A value-type payload has no null sentinel, so
-/// it cannot represent the unchanged state — omitting it applies
-/// <c>default(TPayload)</c> rather than leaving the payload as it was.
-/// </remarks>
-/// <typeparam name="TPayload">The payload type.</typeparam>
-public sealed record MessageUpdate<TPayload>
-    where TPayload : notnull
+public sealed record MessageUpdate
 {
     private readonly IReadOnlyList<string>? tags;
-
-    /// <summary>The new payload, or <see langword="null"/> to leave the payload unchanged.</summary>
-    public TPayload? Payload { get; init; }
 
     /// <summary>
     /// The new expiry to set, or <see langword="null"/> to leave the current expiry
