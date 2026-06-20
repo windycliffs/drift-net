@@ -185,7 +185,18 @@ public sealed class InMemoryMessageQueue : IMessageQueue
         public TPayload GetPayload<TPayload>()
         {
             using var stream = new MemoryStream(this.Payload, writable: false);
-            return this.Serializer.Deserialize<TPayload>(stream);
+            try
+            {
+                return this.Serializer.Deserialize<TPayload>(stream);
+            }
+            catch (Exception ex) when (ex is not MessageQueueException)
+            {
+                throw new MessagePayloadSerializationException(
+                    $"Failed to deserialize the payload of message '{this.Id}' (type '{this.MessageType}') as '{typeof(TPayload)}'.",
+                    this.Id,
+                    typeof(TPayload),
+                    ex);
+            }
         }
     }
 
@@ -227,7 +238,7 @@ public sealed class InMemoryMessageQueue : IMessageQueue
                     e => this.IsHeldBy(e, now) ? e with { LeaseExpiresAt = leasedUntil, Version = NewVersion(), LastModifiedAt = now } : null,
                     out var updated))
             {
-                throw NotHeld();
+                throw this.NotHeld();
             }
 
             this.LeasedUntil = leasedUntil;
@@ -243,7 +254,7 @@ public sealed class InMemoryMessageQueue : IMessageQueue
                     e => this.IsHeldBy(e, now) ? e with { LeaseToken = null, LeaseExpiresAt = null, Version = NewVersion(), LastModifiedAt = now } : null,
                     out _))
             {
-                throw NotHeld();
+                throw this.NotHeld();
             }
 
             return Task.CompletedTask;
@@ -254,7 +265,7 @@ public sealed class InMemoryMessageQueue : IMessageQueue
             var now = this.queue.clock.UtcNow;
             if (!this.queue.store.RemoveIf(this.id, e => this.IsHeldBy(e, now)))
             {
-                throw NotHeld();
+                throw this.NotHeld();
             }
 
             return Task.CompletedTask;
@@ -271,7 +282,7 @@ public sealed class InMemoryMessageQueue : IMessageQueue
             return ValueTask.CompletedTask;
         }
 
-        private static InvalidOperationException NotHeld() => new("The lease is no longer held.");
+        private MessageLeaseLostException NotHeld() => new(this.id);
 
         // Runs the caller's configure delegate once, outside the store lock, then
         // applies only the properties it set. A property left unset keeps its current
@@ -297,7 +308,7 @@ public sealed class InMemoryMessageQueue : IMessageQueue
                         : null,
                     out var updated))
             {
-                throw NotHeld();
+                throw this.NotHeld();
             }
 
             this.Message = this.queue.Snapshot(updated);

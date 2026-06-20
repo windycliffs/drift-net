@@ -69,9 +69,12 @@ public class MessageQueueContractTests
         var (queue, _) = CreateQueue();
         var message = await queue.PutAsync("m", "hello", Configure<string>("t"), Ct);
 
-        // The payload is stored serialized, so reading it as the wrong type surfaces
-        // as a deserialization failure from the serializer.
-        Assert.Throws<MessagePackSerializationException>(() => message.GetPayload<int>());
+        // The payload is stored serialized, so reading it as the wrong type surfaces as a
+        // queue-specific exception that wraps the serializer's low-level failure.
+        var ex = Assert.Throws<MessagePayloadSerializationException>(() => message.GetPayload<int>());
+        Assert.Equal("m", ex.MessageId);
+        Assert.Equal(typeof(int), ex.PayloadType);
+        Assert.IsType<MessagePackSerializationException>(ex.InnerException);
     }
 
     [Fact]
@@ -432,11 +435,25 @@ public class MessageQueueContractTests
         Assert.NotNull(lease);
         await lease.ReleaseAsync(Ct);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => lease.UpdateAsync("b", (input, _, builder) => builder.SetPayload(input), Ct));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => lease.UpdateAsync((_, builder) => builder.SetTags(["x"]), Ct));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => lease.RenewAsync(TimeSpan.FromMinutes(1), Ct));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => lease.ReleaseAsync(Ct));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => lease.RemoveAsync(Ct));
+        await Assert.ThrowsAsync<MessageLeaseLostException>(() => lease.UpdateAsync("b", (input, _, builder) => builder.SetPayload(input), Ct));
+        await Assert.ThrowsAsync<MessageLeaseLostException>(() => lease.UpdateAsync((_, builder) => builder.SetTags(["x"]), Ct));
+        await Assert.ThrowsAsync<MessageLeaseLostException>(() => lease.RenewAsync(TimeSpan.FromMinutes(1), Ct));
+        await Assert.ThrowsAsync<MessageLeaseLostException>(() => lease.ReleaseAsync(Ct));
+        await Assert.ThrowsAsync<MessageLeaseLostException>(() => lease.RemoveAsync(Ct));
+    }
+
+    [Fact]
+    public async Task LeaseLostExceptionCarriesIdAndIsAMessageQueueException()
+    {
+        var (queue, _) = CreateQueue();
+        var message = await queue.PutAsync("m", "a", Configure<string>("t"), Ct);
+        var lease = await queue.LeaseAsync(message, TimeSpan.FromMinutes(5), Ct);
+        Assert.NotNull(lease);
+        await lease.ReleaseAsync(Ct);
+
+        var ex = await Assert.ThrowsAsync<MessageLeaseLostException>(() => lease.RenewAsync(TimeSpan.FromMinutes(1), Ct));
+        Assert.Equal("m", ex.MessageId);
+        Assert.IsAssignableFrom<MessageQueueException>(ex); // catchable through the shared base
     }
 
     [Fact]
@@ -490,7 +507,7 @@ public class MessageQueueContractTests
         Advance(clock, TimeSpan.FromMinutes(2)); // past lease expiry
 
         Assert.Single(await queue.TakeAsync(10, Ct));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => lease.UpdateAsync("b", (input, _, builder) => builder.SetPayload(input), Ct));
+        await Assert.ThrowsAsync<MessageLeaseLostException>(() => lease.UpdateAsync("b", (input, _, builder) => builder.SetPayload(input), Ct));
     }
 
     [Fact]

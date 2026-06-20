@@ -21,6 +21,12 @@ All notable changes to this project are documented here. The format follows
   an `IMessageBuilder` delegate at put and update time.
 - `IMessagePayloadSerializer`, the abstraction a queue uses to store payloads in
   serialized form (serialize to / deserialize from a `Stream`).
+- A queue-specific exception hierarchy rooted at `MessageQueueException`:
+  `MessagePayloadSerializationException` (wraps a serializer failure on put/update/get),
+  `MessageQueueStorageException` (wraps a backing-store failure in durable
+  implementations), and `MessageLeaseLostException` (a lease operation found the lease no
+  longer held). Argument-validation mistakes keep using the standard `ArgumentException`
+  family.
 - `InMemoryMessageQueue`, a non-durable single-process implementation of the queue,
   backed by a `SortedConcurrentDictionary` ordered by last-modified time, reading
   time through the `WindyCliffs.Clock` `IClock` abstraction and storing payloads as

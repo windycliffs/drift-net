@@ -52,7 +52,19 @@ internal sealed class MessageBuilder(string id, string? version, IMessagePayload
     public IMessageBuilder SetPayload<TPayload>(TPayload payload)
     {
         using var stream = new MemoryStream();
-        serializer.Serialize(stream, payload);
+        try
+        {
+            serializer.Serialize(stream, payload);
+        }
+        catch (Exception ex) when (ex is not MessageQueueException)
+        {
+            throw new MessagePayloadSerializationException(
+                $"Failed to serialize the payload of type '{typeof(TPayload)}' for message '{this.Id}'.",
+                this.Id,
+                typeof(TPayload),
+                ex);
+        }
+
         this.Payload = stream.ToArray();
         this.PayloadSet = true;
         return this;

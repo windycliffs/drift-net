@@ -96,3 +96,21 @@ foreach (var candidate in await queue.TakeAsync(10))
 `SystemClock.Instance` by default; pass an `IClock` (from the `WindyCliffs.Clock`
 package) — for example a `MockClock` — alongside the serializer to control time in
 tests.
+
+### Errors
+
+Queue-specific failures derive from `MessageQueueException`, so you can catch that to
+handle any of them, or catch a specific type:
+
+- `MessagePayloadSerializationException` — a payload could not be serialized (put or
+  update) or deserialized (`GetPayload`). It wraps the serializer's own exception as
+  `InnerException` and carries the `MessageId` and `PayloadType`.
+- `MessageLeaseLostException` — a lease operation (update, renew, release, remove) ran
+  after the lease was lost: it expired, was already released or removed, or the message
+  was claimed elsewhere.
+- `MessageQueueStorageException` — the backing store failed; raised by durable
+  implementations (the in-memory queue keeps its state in process and does not throw it).
+
+Caller mistakes — a null id, a null builder, a non-positive lease duration, or a builder
+that does not set the message type and payload — surface as the standard
+`ArgumentException` / `InvalidOperationException` types, not as `MessageQueueException`.
