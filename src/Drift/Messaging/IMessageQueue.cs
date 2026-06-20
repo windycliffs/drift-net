@@ -17,15 +17,22 @@ public interface IMessageQueue
     /// The queue assigns the initial <see cref="IMessage.Version"/> and
     /// <see cref="IMessage.CreatedAt"/> and returns the stored message.
     /// </summary>
-    /// <typeparam name="TPayload">The payload type.</typeparam>
+    /// <typeparam name="TInput">The input for message generation.</typeparam>
     /// <param name="id">The unique identifier for the message. Must be non-empty.</param>
-    /// <param name="payload">The payload to enqueue.</param>
-    /// <param name="options">Metadata supplied by the caller (message type, expiry, initial visibility, tags).</param>
+    /// <param name="input">The input for message generation.</param>
+    /// <param name="builder">
+    /// A delegate that configures the message builder. It must set both the message
+    /// type (<see cref="IMessageBuilder.SetMessageType"/>) and the payload
+    /// (<see cref="IMessageBuilder.SetPayload"/>).
+    /// </param>
     /// <param name="ct">A token to cancel the operation.</param>
     /// <exception cref="ArgumentException"><paramref name="id"/> is null or empty.</exception>
-    /// <exception cref="InvalidOperationException">A message with <paramref name="id"/> already exists.</exception>
-    Task<IMessage> PutAsync<TPayload>(string id, TPayload payload, MessagePutOptions options, CancellationToken ct = default)
-        where TPayload : notnull;
+    /// <exception cref="ArgumentNullException"><paramref name="builder"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// A message with <paramref name="id"/> already exists, or <paramref name="builder"/>
+    /// left the message type or payload unset.
+    /// </exception>
+    Task<IMessage> PutAsync<TInput>(string id, TInput input, Action<TInput, IMessageBuilder> builder, CancellationToken ct = default);
 
     /// <summary>
     /// Reads the message with the given <paramref name="id"/>, regardless of its

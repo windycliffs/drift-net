@@ -29,28 +29,27 @@ public interface IMessageLease : IAsyncDisposable
 
     /// <summary>
     /// Applies a partial update to the leased message's properties — expiry, visibility
-    /// time, and tags — leaving any field left unset in <paramref name="update"/>
+    /// time, and tags — leaving any field left unset in <paramref name="builder"/>
     /// unchanged, without changing the payload. A new visibility time
-    /// (<see cref="MessageUpdate.InvisibleBefore"/>) takes effect once the lease is
+    /// (<see cref="IMessageBuilder.SetInvisibleBefore"/>) takes effect once the lease is
     /// released; it does not surface the message while it is still leased. Clearing an
     /// existing expiry or visibility time is not supported in this version.
     /// </summary>
-    /// <param name="update">The property change to apply.</param>
+    /// <param name="builder">A delegate to configure the message builder.</param>
     /// <param name="ct">A token to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">The lease is no longer held.</exception>
-    Task UpdateAsync(MessageUpdate update, CancellationToken ct = default);
+    Task UpdateAsync(Action<IMessage, IMessageBuilder> builder, CancellationToken ct = default);
 
     /// <summary>
     /// Replaces the leased message's payload and applies the property change in
-    /// <paramref name="update"/> (see <see cref="UpdateAsync(MessageUpdate, CancellationToken)"/>).
+    /// <paramref name="builder"/> (see <see cref="UpdateAsync(Action{IMessage, IMessageBuilder}, CancellationToken)"/>).
     /// </summary>
-    /// <typeparam name="TPayload">The payload type.</typeparam>
-    /// <param name="payload">The new payload.</param>
-    /// <param name="update">The property change to apply.</param>
+    /// <typeparam name="TInput">The input type for message generation.</typeparam>
+    /// <param name="input">The input for message generation.</param>
+    /// <param name="builder">A delegate to configure the message builder.</param>
     /// <param name="ct">A token to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">The lease is no longer held.</exception>
-    Task UpdateAsync<TPayload>(TPayload payload, MessageUpdate update, CancellationToken ct = default)
-        where TPayload : notnull;
+    Task UpdateAsync<TInput>(TInput input, Action<TInput, IMessage, IMessageBuilder> builder, CancellationToken ct = default);
 
     /// <summary>
     /// Renews the lease, extending the hold by <paramref name="leaseDuration"/> from

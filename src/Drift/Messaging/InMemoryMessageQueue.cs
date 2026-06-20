@@ -38,15 +38,26 @@ public sealed class InMemoryMessageQueue(IClock clock) : IMessageQueue
     }
 
     /// <inheritdoc />
-    public Task<IMessage> PutAsync<TPayload>(string id, TPayload payload, MessagePutOptions options, CancellationToken ct = default)
-        where TPayload : notnull
+    public Task<IMessage> PutAsync<TInput>(string id, TInput input, Action<TInput, IMessageBuilder> builder, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(id);
-        ArgumentNullException.ThrowIfNull(payload);
-        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(builder);
+
+        var draft = new MessageBuilder(id, version: null);
+        builder(input, draft);
+
+        if (!draft.MessageTypeSet)
+        {
+            throw new InvalidOperationException($"A message type must be set for message '{id}'.");
+        }
+
+        if (!draft.PayloadSet)
+        {
+            throw new InvalidOperationException($"A payload must be set for message '{id}'.");
+        }
 
         var now = this.clock.UtcNow;
-        var entry = new Entry(id, options.MessageType, NewVersion(), now, now, options.ExpiresAt, options.InvisibleBefore, options.Tags, payload);
+        var entry = new Entry(id, draft.MessageType!, NewVersion(), now, now, draft.ExpiresAt, draft.InvisibleBefore, draft.Tags ?? [], draft.Payload);
         if (!this.store.TryAdd(id, entry))
         {
             throw new InvalidOperationException($"A message with id '{id}' already exists.");
@@ -136,7 +147,7 @@ public sealed class InMemoryMessageQueue(IClock clock) : IMessageQueue
         DateTimeOffset? ExpiresAt,
         DateTimeOffset? InvisibleBefore,
         IReadOnlyList<string> Tags,
-        object Payload,
+        object? Payload,
         Guid? LeaseToken = null,
         DateTimeOffset? LeaseExpiresAt = null);
 
@@ -149,19 +160,19 @@ public sealed class InMemoryMessageQueue(IClock clock) : IMessageQueue
         DateTimeOffset? ExpiresAt,
         DateTimeOffset? InvisibleBefore,
         IReadOnlyList<string> Tags,
-        object Payload) : IMessage
+        object? Payload) : IMessage
     {
         public TPayload GetPayload<TPayload>()
-            where TPayload : notnull
         {
             if (this.Payload is TPayload typed)
             {
                 return typed;
             }
 
+            var actual = this.Payload?.GetType().ToString() ?? "null";
             throw new InvalidCastException(
                 $"Message '{this.Id}' (type '{this.MessageType}') carries a payload of type " +
-                $"'{this.Payload.GetType()}'; it cannot be read as '{typeof(TPayload)}'.");
+                $"'{actual}'; it cannot be read as '{typeof(TPayload)}'.");
         }
     }
 
@@ -180,18 +191,16 @@ public sealed class InMemoryMessageQueue(IClock clock) : IMessageQueue
 
         public DateTimeOffset LeasedUntil { get; private set; } = leasedUntil;
 
-        public Task UpdateAsync(MessageUpdate update, CancellationToken ct = default)
+        public Task UpdateAsync(Action<IMessage, IMessageBuilder> builder, CancellationToken ct = default)
         {
-            ArgumentNullException.ThrowIfNull(update);
-            return this.Apply(update, payload: null);
+            ArgumentNullException.ThrowIfNull(builder);
+            return this.Apply(draft => builder(this.Message, draft), applyPayload: false);
         }
 
-        public Task UpdateAsync<TPayload>(TPayload payload, MessageUpdate update, CancellationToken ct = default)
-            where TPayload : notnull
+        public Task UpdateAsync<TInput>(TInput input, Action<TInput, IMessage, IMessageBuilder> builder, CancellationToken ct = default)
         {
-            ArgumentNullException.ThrowIfNull(payload);
-            ArgumentNullException.ThrowIfNull(update);
-            return this.Apply(update, payload);
+            ArgumentNullException.ThrowIfNull(builder);
+            return this.Apply(draft => builder(input, this.Message, draft), applyPayload: true);
         }
 
         public Task RenewAsync(TimeSpan leaseDuration, CancellationToken ct = default)
@@ -251,18 +260,24 @@ public sealed class InMemoryMessageQueue(IClock clock) : IMessageQueue
 
         private static InvalidOperationException NotHeld() => new("The lease is no longer held.");
 
-        private Task Apply(MessageUpdate update, object? payload)
+        // Runs the caller's configure delegate once, outside the store lock, then
+        // applies only the properties it set. A property left unset keeps its current
+        // value. The payload is applied only by the payload-bearing overload.
+        private Task Apply(Action<MessageBuilder> configure, bool applyPayload)
         {
+            var draft = new MessageBuilder(this.Message.Id, this.Message.Version);
+            configure(draft);
+
             var now = this.queue.clock.UtcNow;
             if (!this.queue.store.TryUpdate(
                     this.id,
                     e => this.IsHeldBy(e, now)
                         ? e with
                         {
-                            Payload = payload ?? e.Payload,
-                            ExpiresAt = update.ExpiresAt ?? e.ExpiresAt,
-                            InvisibleBefore = update.InvisibleBefore ?? e.InvisibleBefore,
-                            Tags = update.Tags ?? e.Tags,
+                            Payload = applyPayload && draft.PayloadSet ? draft.Payload : e.Payload,
+                            ExpiresAt = draft.ExpiresAtSet ? draft.ExpiresAt : e.ExpiresAt,
+                            InvisibleBefore = draft.InvisibleBeforeSet ? draft.InvisibleBefore : e.InvisibleBefore,
+                            Tags = draft.TagsSet ? draft.Tags! : e.Tags,
                             Version = NewVersion(),
                             LastModifiedAt = now,
                         }

@@ -27,12 +27,21 @@ public class MessageQueueContractTests
     // Advance in a single atomic step (step == interval) so no intermediate ticks fire.
     private static void Advance(MockClock clock, TimeSpan by) => clock.AdvanceBy(by, by);
 
+    // Configures a message of the given type whose payload is the put input, plus any
+    // extra properties. Keeps the put call sites focused on what each test exercises.
+    private static Action<TInput, IMessageBuilder> Configure<TInput>(string messageType, Action<IMessageBuilder>? extra = null) =>
+        (input, builder) =>
+        {
+            builder.SetMessageType(messageType).SetPayload(input);
+            extra?.Invoke(builder);
+        };
+
     [Fact]
     public async Task PutAssignsVersionAndTimestampsAndKeepsCallerId()
     {
         var (queue, clock) = CreateQueue();
 
-        var message = await queue.PutAsync("order-1", "order-42", new MessagePutOptions("order.placed"), Ct);
+        var message = await queue.PutAsync("order-1", "order-42", Configure<string>("order.placed"), Ct);
 
         Assert.Equal("order-1", message.Id);
         Assert.False(string.IsNullOrEmpty(message.Version));
@@ -48,7 +57,7 @@ public class MessageQueueContractTests
     {
         var (queue, _) = CreateQueue();
 
-        var message = await queue.PutAsync("m", "hello", new MessagePutOptions("t"), Ct);
+        var message = await queue.PutAsync("m", "hello", Configure<string>("t"), Ct);
 
         Assert.Equal("hello", message.GetPayload<string>());
     }
@@ -57,7 +66,7 @@ public class MessageQueueContractTests
     public async Task GetPayloadWithWrongTypeThrows()
     {
         var (queue, _) = CreateQueue();
-        var message = await queue.PutAsync("m", "hello", new MessagePutOptions("t"), Ct);
+        var message = await queue.PutAsync("m", "hello", Configure<string>("t"), Ct);
 
         Assert.Throws<InvalidCastException>(() => message.GetPayload<int>());
     }
@@ -67,7 +76,7 @@ public class MessageQueueContractTests
     {
         var (queue, _) = CreateQueue();
 
-        var message = await queue.PutAsync("m", "a", new MessagePutOptions("t") { Tags = ["red", "urgent"] }, Ct);
+        var message = await queue.PutAsync("m", "a", Configure<string>("t", b => b.SetTags(["red", "urgent"])), Ct);
 
         Assert.Equal(RedUrgent, message.Tags);
     }
@@ -76,10 +85,10 @@ public class MessageQueueContractTests
     public async Task PutWithDuplicateIdThrows()
     {
         var (queue, _) = CreateQueue();
-        await queue.PutAsync("dup", "a", new MessagePutOptions("t"), Ct);
+        await queue.PutAsync("dup", "a", Configure<string>("t"), Ct);
 
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => queue.PutAsync("dup", "b", new MessagePutOptions("t"), Ct));
+            () => queue.PutAsync("dup", "b", Configure<string>("t"), Ct));
     }
 
     [Fact]
@@ -88,14 +97,50 @@ public class MessageQueueContractTests
         var (queue, _) = CreateQueue();
 
         await Assert.ThrowsAsync<ArgumentException>(
-            () => queue.PutAsync(string.Empty, "a", new MessagePutOptions("t"), Ct));
+            () => queue.PutAsync(string.Empty, "a", Configure<string>("t"), Ct));
+    }
+
+    [Fact]
+    public async Task PutWithoutMessageTypeThrows()
+    {
+        var (queue, _) = CreateQueue();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => queue.PutAsync("m", "a", (input, builder) => builder.SetPayload(input), Ct));
+    }
+
+    [Fact]
+    public async Task PutWithoutPayloadThrows()
+    {
+        var (queue, _) = CreateQueue();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => queue.PutAsync("m", "a", (input, builder) => builder.SetMessageType("t"), Ct));
+    }
+
+    [Fact]
+    public async Task PutWithEmptyMessageTypeThrows()
+    {
+        var (queue, _) = CreateQueue();
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => queue.PutAsync("m", "a", (input, builder) => builder.SetMessageType(string.Empty).SetPayload(input), Ct));
+    }
+
+    [Fact]
+    public async Task PutWithNullTagElementThrows()
+    {
+        var (queue, _) = CreateQueue();
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => queue.PutAsync("m", "a", Configure<string>("t", b => b.SetTags(["ok", null!])), Ct));
     }
 
     [Fact]
     public async Task TryGetReturnsMessageRegardlessOfVisibility()
     {
         var (queue, _) = CreateQueue();
-        var message = await queue.PutAsync("m", "a", new MessagePutOptions("t"), Ct);
+        var message = await queue.PutAsync("m", "a", Configure<string>("t"), Ct);
 
         Assert.Null(await queue.TryGetAsync("missing", Ct));
         Assert.Equal("a", (await queue.TryGetAsync("m", Ct))?.GetPayload<string>());
@@ -110,9 +155,9 @@ public class MessageQueueContractTests
     {
         var (queue, _) = CreateQueue();
         // Put at the same instant, so they sort by the id tie-breaker: 1, 2, 3.
-        await queue.PutAsync("1", "a", new MessagePutOptions("t"), Ct);
-        await queue.PutAsync("2", "b", new MessagePutOptions("t"), Ct);
-        await queue.PutAsync("3", "c", new MessagePutOptions("t"), Ct);
+        await queue.PutAsync("1", "a", Configure<string>("t"), Ct);
+        await queue.PutAsync("2", "b", Configure<string>("t"), Ct);
+        await queue.PutAsync("3", "c", Configure<string>("t"), Ct);
 
         var first = await queue.TakeAsync(2, Ct);
         Assert.Equal(Ids12, first.Select(m => m.Id));
@@ -125,9 +170,9 @@ public class MessageQueueContractTests
     public async Task TakeOrdersByLastModifiedSoTouchedMessagesMoveToTheEnd()
     {
         var (queue, clock) = CreateQueue();
-        await queue.PutAsync("a", "a", new MessagePutOptions("t"), Ct);
+        await queue.PutAsync("a", "a", Configure<string>("t"), Ct);
         Advance(clock, TimeSpan.FromMinutes(1));
-        await queue.PutAsync("b", "b", new MessagePutOptions("t"), Ct);
+        await queue.PutAsync("b", "b", Configure<string>("t"), Ct);
 
         Assert.Equal(Ab, (await queue.TakeAsync(10, Ct)).Select(m => m.Id));
 
@@ -153,7 +198,7 @@ public class MessageQueueContractTests
     public async Task LeaseHidesMessageAndSecondLeaseReturnsNull()
     {
         var (queue, _) = CreateQueue();
-        var message = await queue.PutAsync("m", "a", new MessagePutOptions("t"), Ct);
+        var message = await queue.PutAsync("m", "a", Configure<string>("t"), Ct);
 
         var lease = await queue.LeaseAsync(message, TimeSpan.FromMinutes(5), Ct);
 
@@ -166,7 +211,7 @@ public class MessageQueueContractTests
     public async Task LeaseOfUnknownMessageReturnsNull()
     {
         var (queue, _) = CreateQueue();
-        var foreign = await queue.PutAsync("m", "a", new MessagePutOptions("t"), Ct);
+        var foreign = await queue.PutAsync("m", "a", Configure<string>("t"), Ct);
         var (otherQueue, _) = CreateQueue();
 
         Assert.Null(await otherQueue.LeaseAsync(foreign, TimeSpan.FromMinutes(5), Ct));
@@ -176,7 +221,7 @@ public class MessageQueueContractTests
     public async Task LeaseWithStaleSnapshotReturnsNull()
     {
         var (queue, _) = CreateQueue();
-        var message = await queue.PutAsync("m", "a", new MessagePutOptions("t"), Ct);
+        var message = await queue.PutAsync("m", "a", Configure<string>("t"), Ct);
         var lease = await queue.LeaseAsync(message, TimeSpan.FromMinutes(5), Ct);
         Assert.NotNull(lease);
         await lease.ReleaseAsync(Ct); // visible again, but the version has moved on
@@ -188,7 +233,7 @@ public class MessageQueueContractTests
     public async Task LeaseWithNonPositiveDurationThrows()
     {
         var (queue, _) = CreateQueue();
-        var message = await queue.PutAsync("m", "a", new MessagePutOptions("t"), Ct);
+        var message = await queue.PutAsync("m", "a", Configure<string>("t"), Ct);
 
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => queue.LeaseAsync(message, TimeSpan.Zero, Ct));
     }
@@ -197,12 +242,12 @@ public class MessageQueueContractTests
     public async Task UpdateWithPayloadChangesPayloadAndVersion()
     {
         var (queue, _) = CreateQueue();
-        var message = await queue.PutAsync("m", "a", new MessagePutOptions("t"), Ct);
+        var message = await queue.PutAsync("m", "a", Configure<string>("t"), Ct);
         var lease = await queue.LeaseAsync(message, TimeSpan.FromMinutes(5), Ct);
         Assert.NotNull(lease);
         var versionBefore = lease.Message.Version;
 
-        await lease.UpdateAsync("b", new MessageUpdate(), Ct);
+        await lease.UpdateAsync("b", (input, _, builder) => builder.SetPayload(input), Ct);
 
         Assert.Equal("b", lease.Message.GetPayload<string>());
         Assert.NotEqual(versionBefore, lease.Message.Version);
@@ -212,12 +257,12 @@ public class MessageQueueContractTests
     public async Task UpdatePropertiesOnlyLeavesPayloadButChangesProperties()
     {
         var (queue, clock) = CreateQueue();
-        var message = await queue.PutAsync("m", "a", new MessagePutOptions("t"), Ct);
+        var message = await queue.PutAsync("m", "a", Configure<string>("t"), Ct);
         var lease = await queue.LeaseAsync(message, TimeSpan.FromMinutes(5), Ct);
         Assert.NotNull(lease);
         var newExpiry = clock.UtcNow.AddHours(1);
 
-        await lease.UpdateAsync(new MessageUpdate { ExpiresAt = newExpiry, Tags = ["archived"] }, Ct);
+        await lease.UpdateAsync((_, builder) => builder.SetExpiresAt(newExpiry).SetTags(["archived"]), Ct);
 
         Assert.Equal("a", lease.Message.GetPayload<string>()); // payload untouched
         Assert.Equal(newExpiry, lease.Message.ExpiresAt);
@@ -229,26 +274,41 @@ public class MessageQueueContractTests
     {
         var clock = new MockClock();
         var queue = new InMemoryMessageQueue(clock);
-        var message = await queue.PutAsync("m", 5, new MessagePutOptions("t"), Ct);
+        var message = await queue.PutAsync("m", 5, Configure<int>("t"), Ct);
         var lease = await queue.LeaseAsync(message, TimeSpan.FromMinutes(5), Ct);
         Assert.NotNull(lease);
 
-        await lease.UpdateAsync(new MessageUpdate { ExpiresAt = clock.UtcNow.AddHours(1) }, Ct);
+        await lease.UpdateAsync((_, builder) => builder.SetExpiresAt(clock.UtcNow.AddHours(1)), Ct);
 
         Assert.Equal(5, lease.Message.GetPayload<int>());
+    }
+
+    [Fact]
+    public async Task UpdateDoesNotChangePayloadWithoutPayloadOverload()
+    {
+        var (queue, _) = CreateQueue();
+        var message = await queue.PutAsync("m", "a", Configure<string>("t"), Ct);
+        var lease = await queue.LeaseAsync(message, TimeSpan.FromMinutes(5), Ct);
+        Assert.NotNull(lease);
+
+        // The property-only overload does not expose the payload; SetPayload is the
+        // only way to change it, and it is not available here.
+        await lease.UpdateAsync((_, builder) => builder.SetTags(["archived"]), Ct);
+
+        Assert.Equal("a", lease.Message.GetPayload<string>());
     }
 
     [Fact]
     public async Task UpdateWithPastInvisibleBeforeDoesNotSurfaceMessageWhileLeased()
     {
         var (queue, clock) = CreateQueue();
-        var message = await queue.PutAsync("m", "a", new MessagePutOptions("t"), Ct);
+        var message = await queue.PutAsync("m", "a", Configure<string>("t"), Ct);
         var lease = await queue.LeaseAsync(message, TimeSpan.FromMinutes(5), Ct);
         Assert.NotNull(lease);
 
         // Setting InvisibleBefore to the past while leased must NOT surface the message;
         // it is still exclusively held.
-        await lease.UpdateAsync(new MessageUpdate { InvisibleBefore = clock.UtcNow.AddMinutes(-1) }, Ct);
+        await lease.UpdateAsync((_, builder) => builder.SetInvisibleBefore(clock.UtcNow.AddMinutes(-1)), Ct);
 
         Assert.Empty(await queue.TakeAsync(10, Ct));
     }
@@ -257,12 +317,12 @@ public class MessageQueueContractTests
     public async Task UpdatedInvisibleBeforeDefersVisibilityAfterRelease()
     {
         var (queue, clock) = CreateQueue();
-        var message = await queue.PutAsync("m", "a", new MessagePutOptions("t"), Ct);
+        var message = await queue.PutAsync("m", "a", Configure<string>("t"), Ct);
         var lease = await queue.LeaseAsync(message, TimeSpan.FromMinutes(5), Ct);
         Assert.NotNull(lease);
         var deferUntil = clock.UtcNow.AddMinutes(10);
 
-        await lease.UpdateAsync(new MessageUpdate { InvisibleBefore = deferUntil }, Ct);
+        await lease.UpdateAsync((_, builder) => builder.SetInvisibleBefore(deferUntil), Ct);
         await lease.ReleaseAsync(Ct);
 
         Assert.Empty(await queue.TakeAsync(10, Ct)); // still deferred after release
@@ -274,12 +334,12 @@ public class MessageQueueContractTests
     public async Task UpdateRefreshesLastModifiedAt()
     {
         var (queue, clock) = CreateQueue();
-        var message = await queue.PutAsync("m", "a", new MessagePutOptions("t"), Ct);
+        var message = await queue.PutAsync("m", "a", Configure<string>("t"), Ct);
         var lease = await queue.LeaseAsync(message, TimeSpan.FromMinutes(5), Ct);
         Assert.NotNull(lease);
         Advance(clock, TimeSpan.FromMinutes(1));
 
-        await lease.UpdateAsync("b", new MessageUpdate(), Ct);
+        await lease.UpdateAsync("b", (input, _, builder) => builder.SetPayload(input), Ct);
 
         Assert.Equal(message.CreatedAt.AddMinutes(1), lease.Message.LastModifiedAt);
     }
@@ -288,7 +348,7 @@ public class MessageQueueContractTests
     public async Task RenewExtendsTheLease()
     {
         var (queue, clock) = CreateQueue();
-        var message = await queue.PutAsync("m", "a", new MessagePutOptions("t"), Ct);
+        var message = await queue.PutAsync("m", "a", Configure<string>("t"), Ct);
         var t0 = message.CreatedAt;
         var lease = await queue.LeaseAsync(message, TimeSpan.FromMinutes(1), Ct);
         Assert.NotNull(lease);
@@ -299,7 +359,7 @@ public class MessageQueueContractTests
 
         Advance(clock, TimeSpan.FromMinutes(2)); // past the original expiry, within the renewed one
         Assert.Empty(await queue.TakeAsync(10, Ct)); // still leased
-        await lease.UpdateAsync("b", new MessageUpdate(), Ct); // still held
+        await lease.UpdateAsync("b", (input, _, builder) => builder.SetPayload(input), Ct); // still held
         Assert.Equal("b", lease.Message.GetPayload<string>());
     }
 
@@ -307,7 +367,7 @@ public class MessageQueueContractTests
     public async Task RenewWithNonPositiveDurationThrows()
     {
         var (queue, _) = CreateQueue();
-        var message = await queue.PutAsync("m", "a", new MessagePutOptions("t"), Ct);
+        var message = await queue.PutAsync("m", "a", Configure<string>("t"), Ct);
         var lease = await queue.LeaseAsync(message, TimeSpan.FromMinutes(5), Ct);
         Assert.NotNull(lease);
 
@@ -318,7 +378,7 @@ public class MessageQueueContractTests
     public async Task ReleaseMakesMessageVisibleAgain()
     {
         var (queue, _) = CreateQueue();
-        var message = await queue.PutAsync("m", "a", new MessagePutOptions("t"), Ct);
+        var message = await queue.PutAsync("m", "a", Configure<string>("t"), Ct);
         var lease = await queue.LeaseAsync(message, TimeSpan.FromMinutes(5), Ct);
         Assert.NotNull(lease);
 
@@ -331,7 +391,7 @@ public class MessageQueueContractTests
     public async Task RemoveDeletesMessage()
     {
         var (queue, _) = CreateQueue();
-        var message = await queue.PutAsync("m", "a", new MessagePutOptions("t"), Ct);
+        var message = await queue.PutAsync("m", "a", Configure<string>("t"), Ct);
         var lease = await queue.LeaseAsync(message, TimeSpan.FromMinutes(5), Ct);
         Assert.NotNull(lease);
 
@@ -346,23 +406,34 @@ public class MessageQueueContractTests
     public async Task MutatingAfterReleaseThrows()
     {
         var (queue, _) = CreateQueue();
-        var message = await queue.PutAsync("m", "a", new MessagePutOptions("t"), Ct);
+        var message = await queue.PutAsync("m", "a", Configure<string>("t"), Ct);
         var lease = await queue.LeaseAsync(message, TimeSpan.FromMinutes(5), Ct);
         Assert.NotNull(lease);
         await lease.ReleaseAsync(Ct);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => lease.UpdateAsync("b", new MessageUpdate(), Ct));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => lease.UpdateAsync(new MessageUpdate { Tags = ["x"] }, Ct));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => lease.UpdateAsync("b", (input, _, builder) => builder.SetPayload(input), Ct));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => lease.UpdateAsync((_, builder) => builder.SetTags(["x"]), Ct));
         await Assert.ThrowsAsync<InvalidOperationException>(() => lease.RenewAsync(TimeSpan.FromMinutes(1), Ct));
         await Assert.ThrowsAsync<InvalidOperationException>(() => lease.ReleaseAsync(Ct));
         await Assert.ThrowsAsync<InvalidOperationException>(() => lease.RemoveAsync(Ct));
     }
 
     [Fact]
+    public async Task UpdateWithNullTagElementThrows()
+    {
+        var (queue, _) = CreateQueue();
+        var message = await queue.PutAsync("m", "a", Configure<string>("t"), Ct);
+        var lease = await queue.LeaseAsync(message, TimeSpan.FromMinutes(5), Ct);
+        Assert.NotNull(lease);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => lease.UpdateAsync((_, builder) => builder.SetTags([null!]), Ct));
+    }
+
+    [Fact]
     public async Task DisposeReleasesHeldLease()
     {
         var (queue, _) = CreateQueue();
-        var message = await queue.PutAsync("m", "a", new MessagePutOptions("t"), Ct);
+        var message = await queue.PutAsync("m", "a", Configure<string>("t"), Ct);
 
         await using (var lease = await queue.LeaseAsync(message, TimeSpan.FromMinutes(5), Ct))
         {
@@ -377,7 +448,7 @@ public class MessageQueueContractTests
     public async Task ScheduledMessageIsInvisibleUntilClockAdvances()
     {
         var (queue, clock) = CreateQueue();
-        await queue.PutAsync("m", "a", new MessagePutOptions("t") { InvisibleBefore = clock.UtcNow.AddMinutes(1) }, Ct);
+        await queue.PutAsync("m", "a", Configure<string>("t", b => b.SetInvisibleBefore(clock.UtcNow.AddMinutes(1))), Ct);
 
         Assert.Empty(await queue.TakeAsync(10, Ct));
 
@@ -390,7 +461,7 @@ public class MessageQueueContractTests
     public async Task LeaseExpiryRestoresVisibilityAndInvalidatesLease()
     {
         var (queue, clock) = CreateQueue();
-        var message = await queue.PutAsync("m", "a", new MessagePutOptions("t"), Ct);
+        var message = await queue.PutAsync("m", "a", Configure<string>("t"), Ct);
         var lease = await queue.LeaseAsync(message, TimeSpan.FromMinutes(1), Ct);
         Assert.NotNull(lease);
         Assert.Empty(await queue.TakeAsync(10, Ct));
@@ -398,28 +469,16 @@ public class MessageQueueContractTests
         Advance(clock, TimeSpan.FromMinutes(2)); // past lease expiry
 
         Assert.Single(await queue.TakeAsync(10, Ct));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => lease.UpdateAsync("b", new MessageUpdate(), Ct));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => lease.UpdateAsync("b", (input, _, builder) => builder.SetPayload(input), Ct));
     }
 
     [Fact]
     public async Task EstimateCountReflectsQueuedMessages()
     {
         var (queue, _) = CreateQueue();
-        await queue.PutAsync("1", "a", new MessagePutOptions("t"), Ct);
-        await queue.PutAsync("2", "b", new MessagePutOptions("t"), Ct);
+        await queue.PutAsync("1", "a", Configure<string>("t"), Ct);
+        await queue.PutAsync("2", "b", Configure<string>("t"), Ct);
 
         Assert.Equal(2L, await queue.EstimateCountAsync(Ct));
     }
-
-    [Fact]
-    public void PutOptionsRejectEmptyMessageType() =>
-        Assert.Throws<ArgumentException>(() => new MessagePutOptions(string.Empty));
-
-    [Fact]
-    public void PutOptionsRejectNullTagElement() =>
-        Assert.Throws<ArgumentException>(() => new MessagePutOptions("t") { Tags = ["ok", null!] });
-
-    [Fact]
-    public void MessageUpdateRejectsNullTagElement() =>
-        Assert.Throws<ArgumentException>(() => new MessageUpdate { Tags = [null!] });
 }

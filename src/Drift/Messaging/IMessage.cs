@@ -67,6 +67,5 @@ public interface IMessage
     /// <exception cref="InvalidCastException">
     /// The payload is not of type <typeparamref name="TPayload"/>.
     /// </exception>
-    TPayload GetPayload<TPayload>()
-        where TPayload : notnull;
+    TPayload GetPayload<TPayload>();
 }
