@@ -42,20 +42,23 @@ as an ETag), `CreatedAt`, `LastModifiedAt`, optional `ExpiresAt` and
 
 ### Message queue
 
-`IMessageQueue` models a worker queue: `PutAsync<TPayload>` enqueues a payload
-under a caller-supplied id, `TryGetAsync` reads one by id, `TakeAsync` reads
+`IMessageQueue` models a worker queue: `PutAsync` enqueues a message — a delegate
+configures it through an `IMessageBuilder` (message type, payload, and any optional
+expiry, visibility time, or tags) — `TryGetAsync` reads one by id, `TakeAsync` reads
 currently-visible candidates (a non-exclusive read), and `LeaseAsync` claims one
 for exclusive processing. The returned `IMessageLease` (an `IAsyncDisposable`)
-exposes `UpdateAsync` (properties only, or with a new payload), `RenewAsync`,
-`ReleaseAsync`, and `RemoveAsync`, so those operations are possible only while the
-message is leased. `EstimateCountAsync` returns an approximate depth.
+exposes `UpdateAsync` (configure properties through a builder, or the payload-bearing
+overload to also replace the payload), `RenewAsync`, `ReleaseAsync`, and
+`RemoveAsync`, so those operations are possible only while the message is leased.
+`EstimateCountAsync` returns an approximate depth.
 
 ```csharp
 using WindyCliffs.Drift.Messaging;
 
 IMessageQueue queue = new InMemoryMessageQueue();
 
-await queue.PutAsync(order.Id, order, new MessagePutOptions("order.placed"));
+await queue.PutAsync(order.Id, order, static (o, builder) =>
+    builder.SetMessageType("order.placed").SetPayload(o));
 
 foreach (var candidate in await queue.TakeAsync(10))
 {

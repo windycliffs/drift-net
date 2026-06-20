@@ -47,9 +47,10 @@ without knowing its payload type.
 
 `IMessageQueue` is a worker queue over messages:
 
-- `PutAsync<TPayload>(id, payload, options)` enqueues a payload under a
-  caller-supplied id; the queue assigns the `Version` and `CreatedAt` and returns
-  the stored message.
+- `PutAsync<TInput>(id, input, builder)` enqueues a message under a caller-supplied
+  id. A delegate configures it through an `IMessageBuilder` — it must set the message
+  type and payload, and may set an expiry, a visibility time, and tags. The queue
+  assigns the `Version` and `CreatedAt` and returns the stored message.
 - `TryGetAsync(id)` reads a message by id (regardless of visibility), or `null`.
 - `TakeAsync(count)` reads up to `count` currently-visible messages in the queue's
   processing order. This is a non-exclusive, non-destructive read — two callers may
@@ -59,16 +60,18 @@ without knowing its payload type.
 - `EstimateCountAsync()` returns an approximate message count.
 
 The lease (an `IAsyncDisposable`) carries the operations that are valid only while
-the message is held — `UpdateAsync` (properties only, or `UpdateAsync<TPayload>` with
-a new payload), `RenewAsync`, `ReleaseAsync`, and `RemoveAsync`. Disposing the lease
-releases it if it is still held.
+the message is held — `UpdateAsync` (configure properties through a builder, leaving
+the payload untouched, or the payload-bearing overload to also replace it),
+`RenewAsync`, `ReleaseAsync`, and `RemoveAsync`. Disposing the lease releases it if
+it is still held.
 
 ```csharp
 using WindyCliffs.Drift.Messaging;
 
 IMessageQueue queue = new InMemoryMessageQueue();
 
-await queue.PutAsync(order.Id, order, new MessagePutOptions("order.placed"));
+await queue.PutAsync(order.Id, order, static (o, builder) =>
+    builder.SetMessageType("order.placed").SetPayload(o));
 
 foreach (var candidate in await queue.TakeAsync(10))
 {

@@ -14,11 +14,11 @@ All notable changes to this project are documented here. The format follows
   (id, message type, opaque `Version` concurrency token, creation and last-modified
   times, optional expiration time, optional `InvisibleBefore` visibility time, and
   tags) plus a `GetPayload<TPayload>()` accessor for the payload.
-- Message queue abstraction `IMessageQueue` (`PutAsync<TPayload>` under a
-  caller-supplied id, get-by-id, take, lease, estimate count) and the lease handle
-  `IMessageLease` (update properties or `UpdateAsync<TPayload>` with a new payload,
-  renew, release, remove — valid only while leased), with `MessagePutOptions` and
-  `MessageUpdate`.
+- Message queue abstraction `IMessageQueue` (`PutAsync` under a caller-supplied id,
+  get-by-id, take, lease, estimate count) and the lease handle `IMessageLease`
+  (update properties, or the payload-bearing overload to also replace the payload,
+  renew, release, remove — valid only while leased). Messages are configured through
+  an `IMessageBuilder` delegate at put and update time.
 - `InMemoryMessageQueue`, a non-durable single-process implementation of the queue,
   backed by a `SortedConcurrentDictionary` ordered by last-modified time and reading
   time through the `WindyCliffs.Clock` `IClock` abstraction.
