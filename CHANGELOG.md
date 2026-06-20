@@ -19,9 +19,12 @@ All notable changes to this project are documented here. The format follows
   (update properties, or the payload-bearing overload to also replace the payload,
   renew, release, remove — valid only while leased). Messages are configured through
   an `IMessageBuilder` delegate at put and update time.
+- `IMessagePayloadSerializer`, the abstraction a queue uses to store payloads in
+  serialized form (serialize to / deserialize from a `Stream`).
 - `InMemoryMessageQueue`, a non-durable single-process implementation of the queue,
-  backed by a `SortedConcurrentDictionary` ordered by last-modified time and reading
-  time through the `WindyCliffs.Clock` `IClock` abstraction.
+  backed by a `SortedConcurrentDictionary` ordered by last-modified time, reading
+  time through the `WindyCliffs.Clock` `IClock` abstraction and storing payloads as
+  bytes via an injected `IMessagePayloadSerializer`.
 
 ### Changed
 - Target `net8.0` (LTS) for broad consumer compatibility (consumable by net8/9/10).

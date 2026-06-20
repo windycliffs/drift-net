@@ -65,10 +65,15 @@ the payload untouched, or the payload-bearing overload to also replace it),
 `RenewAsync`, `ReleaseAsync`, and `RemoveAsync`. Disposing the lease releases it if
 it is still held.
 
+`InMemoryMessageQueue` stores payloads in serialized form, so it takes an
+`IMessagePayloadSerializer` — supply one that serializes a payload to a `Stream` and
+reads it back (e.g. a MessagePack- or JSON-based implementation):
+
 ```csharp
 using WindyCliffs.Drift.Messaging;
 
-IMessageQueue queue = new InMemoryMessageQueue();
+IMessagePayloadSerializer serializer = /* your serializer */;
+IMessageQueue queue = new InMemoryMessageQueue(serializer);
 
 await queue.PutAsync(order.Id, order, static (o, builder) =>
     builder.SetMessageType("order.placed").SetPayload(o));
@@ -89,4 +94,5 @@ foreach (var candidate in await queue.TakeAsync(10))
 `InMemoryMessageQueue` is a non-durable, single-process implementation of
 `IMessageQueue` suitable for tests and local development. It reads time from
 `SystemClock.Instance` by default; pass an `IClock` (from the `WindyCliffs.Clock`
-package) — for example a `MockClock` — to control time in tests.
+package) — for example a `MockClock` — alongside the serializer to control time in
+tests.

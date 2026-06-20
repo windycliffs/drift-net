@@ -2,13 +2,16 @@ namespace WindyCliffs.Drift.Messaging;
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 
 /// <summary>
 /// The default <see cref="IMessageBuilder"/>: an in-memory accumulator that records
 /// which properties a caller's configure delegate sets. A queue reads the
 /// <c>*Set</c> flags to tell a deliberate change from a property left untouched.
+/// The payload is serialized to bytes as soon as it is set, so the builder never
+/// retains the caller's payload object.
 /// </summary>
-internal sealed class MessageBuilder(string id, string? version) : IMessageBuilder
+internal sealed class MessageBuilder(string id, string? version, IMessagePayloadSerializer serializer) : IMessageBuilder
 {
     /// <inheritdoc />
     public string Id { get; } = id;
@@ -20,7 +23,7 @@ internal sealed class MessageBuilder(string id, string? version) : IMessageBuild
 
     public bool MessageTypeSet { get; private set; }
 
-    public object? Payload { get; private set; }
+    public byte[]? Payload { get; private set; }
 
     public bool PayloadSet { get; private set; }
 
@@ -48,7 +51,9 @@ internal sealed class MessageBuilder(string id, string? version) : IMessageBuild
     /// <inheritdoc />
     public IMessageBuilder SetPayload<TPayload>(TPayload payload)
     {
-        this.Payload = payload;
+        using var stream = new MemoryStream();
+        serializer.Serialize(stream, payload);
+        this.Payload = stream.ToArray();
         this.PayloadSet = true;
         return this;
     }

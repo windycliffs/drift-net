@@ -52,10 +52,14 @@ overload to also replace the payload), `RenewAsync`, `ReleaseAsync`, and
 `RemoveAsync`, so those operations are possible only while the message is leased.
 `EstimateCountAsync` returns an approximate depth.
 
+`InMemoryMessageQueue` stores payloads in serialized form, so it takes an
+`IMessagePayloadSerializer` (e.g. a MessagePack- or JSON-based implementation):
+
 ```csharp
 using WindyCliffs.Drift.Messaging;
 
-IMessageQueue queue = new InMemoryMessageQueue();
+IMessagePayloadSerializer serializer = /* your serializer */;
+IMessageQueue queue = new InMemoryMessageQueue(serializer);
 
 await queue.PutAsync(order.Id, order, static (o, builder) =>
     builder.SetMessageType("order.placed").SetPayload(o));
@@ -76,8 +80,8 @@ foreach (var candidate in await queue.TakeAsync(10))
 `InMemoryMessageQueue` is a non-durable, single-process implementation suitable for
 tests and local development. By default it reads time from `SystemClock.Instance`;
 pass an `IClock` (from the
-[WindyCliffs.Clock](https://www.nuget.org/packages/WindyCliffs.Clock) package) to
-control it in tests.
+[WindyCliffs.Clock](https://www.nuget.org/packages/WindyCliffs.Clock) package)
+alongside the serializer to control time in tests.
 
 > See the [repository](https://github.com/windycliffs/drift-net) for the latest API.
 

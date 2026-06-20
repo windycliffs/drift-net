@@ -4,6 +4,7 @@ using System;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using MessagePack;
 using WindyCliffs.Clock;
 using WindyCliffs.Drift.Messaging;
 using Xunit;
@@ -21,7 +22,7 @@ public class MessageQueueContractTests
     private static (InMemoryMessageQueue Queue, MockClock Clock) CreateQueue()
     {
         var clock = new MockClock();
-        return (new InMemoryMessageQueue(clock), clock);
+        return (new InMemoryMessageQueue(new MessagePackPayloadSerializer(), clock), clock);
     }
 
     // Advance in a single atomic step (step == interval) so no intermediate ticks fire.
@@ -68,7 +69,27 @@ public class MessageQueueContractTests
         var (queue, _) = CreateQueue();
         var message = await queue.PutAsync("m", "hello", Configure<string>("t"), Ct);
 
-        Assert.Throws<InvalidCastException>(() => message.GetPayload<int>());
+        // The payload is stored serialized, so reading it as the wrong type surfaces
+        // as a deserialization failure from the serializer.
+        Assert.Throws<MessagePackSerializationException>(() => message.GetPayload<int>());
+    }
+
+    [Fact]
+    public async Task PayloadIsStoredSerializedAndRoundTripsAComplexType()
+    {
+        var (queue, _) = CreateQueue();
+        var order = new Order { Sku = "SKU-1", Quantity = 3 };
+
+        var message = await queue.PutAsync("m", order, Configure<Order>("order.placed"), Ct);
+
+        // Mutating the original after the put must not change the stored message:
+        // the payload was serialized into the queue, not held by reference.
+        order.Sku = "MUTATED";
+        order.Quantity = 99;
+
+        var stored = message.GetPayload<Order>();
+        Assert.Equal("SKU-1", stored.Sku);
+        Assert.Equal(3, stored.Quantity);
     }
 
     [Fact]
@@ -273,7 +294,7 @@ public class MessageQueueContractTests
     public async Task UpdatePropertiesOnlyLeavesValueTypePayloadUnchanged()
     {
         var clock = new MockClock();
-        var queue = new InMemoryMessageQueue(clock);
+        var queue = new InMemoryMessageQueue(new MessagePackPayloadSerializer(), clock);
         var message = await queue.PutAsync("m", 5, Configure<int>("t"), Ct);
         var lease = await queue.LeaseAsync(message, TimeSpan.FromMinutes(5), Ct);
         Assert.NotNull(lease);
@@ -480,5 +501,14 @@ public class MessageQueueContractTests
         await queue.PutAsync("2", "b", Configure<string>("t"), Ct);
 
         Assert.Equal(2L, await queue.EstimateCountAsync(Ct));
+    }
+
+    // A mutable, attribute-free payload type. Public so the contractless MessagePack
+    // resolver can generate a formatter for it.
+    public sealed class Order
+    {
+        public string? Sku { get; set; }
+
+        public int Quantity { get; set; }
     }
 }

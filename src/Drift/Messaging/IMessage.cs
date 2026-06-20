@@ -64,8 +64,10 @@ public interface IMessage
 
     /// <summary>Returns the payload typed as <typeparamref name="TPayload"/>.</summary>
     /// <typeparam name="TPayload">The expected payload type.</typeparam>
-    /// <exception cref="InvalidCastException">
-    /// The payload is not of type <typeparamref name="TPayload"/>.
-    /// </exception>
+    /// <remarks>
+    /// The exception thrown when the stored payload cannot be provided as
+    /// <typeparamref name="TPayload"/> is defined by the queue implementation — for a
+    /// queue that stores payloads in serialized form, by its payload serializer.
+    /// </remarks>
     TPayload GetPayload<TPayload>();
 }

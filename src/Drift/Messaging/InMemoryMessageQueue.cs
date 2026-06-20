@@ -2,6 +2,7 @@ namespace WindyCliffs.Drift.Messaging;
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -13,7 +14,7 @@ using WindyCliffs.Clock;
 /// tests, local development, and single-process scenarios; state is not durable and
 /// does not survive a process restart. Thread-safe.
 /// </summary>
-public sealed class InMemoryMessageQueue(IClock clock) : IMessageQueue
+public sealed class InMemoryMessageQueue : IMessageQueue
 {
     // Orders messages by last-modified time (oldest first), breaking ties by id.
     // The id tie-break is essential: SortedSet treats values that compare equal as
@@ -25,16 +26,34 @@ public sealed class InMemoryMessageQueue(IClock clock) : IMessageQueue
         return byTime != 0 ? byTime : string.CompareOrdinal(a.Id, b.Id);
     });
 
-    private readonly IClock clock = clock ?? throw new ArgumentNullException(nameof(clock));
+    private readonly IClock clock;
+    private readonly IMessagePayloadSerializer serializer;
     private readonly SortedConcurrentDictionary<string, Entry> store = new(ByLastModified);
 
     /// <summary>
-    /// Creates a queue that reads the current time from <see cref="SystemClock.Instance"/>.
-    /// Use the <see cref="InMemoryMessageQueue(IClock)"/> constructor to control time in tests.
+    /// Creates a queue that stores payloads serialized with <paramref name="serializer"/>
+    /// and reads the current time from <see cref="SystemClock.Instance"/>. Use the
+    /// <see cref="InMemoryMessageQueue(IMessagePayloadSerializer, IClock)"/> constructor
+    /// to control time in tests.
     /// </summary>
-    public InMemoryMessageQueue()
-        : this(SystemClock.Instance)
+    /// <param name="serializer">Serializes message payloads to and from their stored byte form.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="serializer"/> is null.</exception>
+    public InMemoryMessageQueue(IMessagePayloadSerializer serializer)
+        : this(serializer, SystemClock.Instance)
     {
+    }
+
+    /// <summary>
+    /// Creates a queue that stores payloads serialized with <paramref name="serializer"/>
+    /// and reads the current time from <paramref name="clock"/>.
+    /// </summary>
+    /// <param name="serializer">Serializes message payloads to and from their stored byte form.</param>
+    /// <param name="clock">The clock supplying timestamps and the current time for visibility.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="serializer"/> or <paramref name="clock"/> is null.</exception>
+    public InMemoryMessageQueue(IMessagePayloadSerializer serializer, IClock clock)
+    {
+        this.serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
+        this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
     }
 
     /// <inheritdoc />
@@ -43,7 +62,7 @@ public sealed class InMemoryMessageQueue(IClock clock) : IMessageQueue
         ArgumentException.ThrowIfNullOrEmpty(id);
         ArgumentNullException.ThrowIfNull(builder);
 
-        var draft = new MessageBuilder(id, version: null);
+        var draft = new MessageBuilder(id, version: null, this.serializer);
         builder(input, draft);
 
         if (!draft.MessageTypeSet)
@@ -57,20 +76,20 @@ public sealed class InMemoryMessageQueue(IClock clock) : IMessageQueue
         }
 
         var now = this.clock.UtcNow;
-        var entry = new Entry(id, draft.MessageType!, NewVersion(), now, now, draft.ExpiresAt, draft.InvisibleBefore, draft.Tags ?? [], draft.Payload);
+        var entry = new Entry(id, draft.MessageType!, NewVersion(), now, now, draft.ExpiresAt, draft.InvisibleBefore, draft.Tags ?? [], draft.Payload!);
         if (!this.store.TryAdd(id, entry))
         {
             throw new InvalidOperationException($"A message with id '{id}' already exists.");
         }
 
-        return Task.FromResult(Snapshot(entry));
+        return Task.FromResult(this.Snapshot(entry));
     }
 
     /// <inheritdoc />
     public Task<IMessage?> TryGetAsync(string id, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(id);
-        return Task.FromResult<IMessage?>(this.store.TryGetValue(id, out var entry) ? Snapshot(entry) : null);
+        return Task.FromResult<IMessage?>(this.store.TryGetValue(id, out var entry) ? this.Snapshot(entry) : null);
     }
 
     /// <inheritdoc />
@@ -84,7 +103,7 @@ public sealed class InMemoryMessageQueue(IClock clock) : IMessageQueue
         var now = this.clock.UtcNow;
         IReadOnlyList<IMessage> visible = this.store
             .Take(e => IsVisible(e, now), count)
-            .Select(Snapshot)
+            .Select(this.Snapshot)
             .ToList();
         return Task.FromResult(visible);
     }
@@ -105,7 +124,7 @@ public sealed class InMemoryMessageQueue(IClock clock) : IMessageQueue
                     : null,
                 out var leased))
         {
-            IMessageLease lease = new Lease(this, leased.Id, token, Snapshot(leased), leasedUntil);
+            IMessageLease lease = new Lease(this, leased.Id, token, this.Snapshot(leased), leasedUntil);
             return Task.FromResult<IMessageLease?>(lease);
         }
 
@@ -135,8 +154,8 @@ public sealed class InMemoryMessageQueue(IClock clock) : IMessageQueue
         && (e.InvisibleBefore is null || now >= e.InvisibleBefore)
         && (e.ExpiresAt is null || now < e.ExpiresAt);
 
-    private static IMessage Snapshot(Entry e) =>
-        new MessageSnapshot(e.Id, e.MessageType, e.Version, e.CreatedAt, e.LastModifiedAt, e.ExpiresAt, e.InvisibleBefore, e.Tags, e.Payload);
+    private IMessage Snapshot(Entry e) =>
+        new MessageSnapshot(e.Id, e.MessageType, e.Version, e.CreatedAt, e.LastModifiedAt, e.ExpiresAt, e.InvisibleBefore, e.Tags, e.Payload, this.serializer);
 
     private sealed record Entry(
         string Id,
@@ -147,7 +166,7 @@ public sealed class InMemoryMessageQueue(IClock clock) : IMessageQueue
         DateTimeOffset? ExpiresAt,
         DateTimeOffset? InvisibleBefore,
         IReadOnlyList<string> Tags,
-        object? Payload,
+        byte[] Payload,
         Guid? LeaseToken = null,
         DateTimeOffset? LeaseExpiresAt = null);
 
@@ -160,19 +179,13 @@ public sealed class InMemoryMessageQueue(IClock clock) : IMessageQueue
         DateTimeOffset? ExpiresAt,
         DateTimeOffset? InvisibleBefore,
         IReadOnlyList<string> Tags,
-        object? Payload) : IMessage
+        byte[] Payload,
+        IMessagePayloadSerializer Serializer) : IMessage
     {
         public TPayload GetPayload<TPayload>()
         {
-            if (this.Payload is TPayload typed)
-            {
-                return typed;
-            }
-
-            var actual = this.Payload?.GetType().ToString() ?? "null";
-            throw new InvalidCastException(
-                $"Message '{this.Id}' (type '{this.MessageType}') carries a payload of type " +
-                $"'{actual}'; it cannot be read as '{typeof(TPayload)}'.");
+            using var stream = new MemoryStream(this.Payload, writable: false);
+            return this.Serializer.Deserialize<TPayload>(stream);
         }
     }
 
@@ -218,7 +231,7 @@ public sealed class InMemoryMessageQueue(IClock clock) : IMessageQueue
             }
 
             this.LeasedUntil = leasedUntil;
-            this.Message = Snapshot(updated);
+            this.Message = this.queue.Snapshot(updated);
             return Task.CompletedTask;
         }
 
@@ -265,7 +278,7 @@ public sealed class InMemoryMessageQueue(IClock clock) : IMessageQueue
         // value. The payload is applied only by the payload-bearing overload.
         private Task Apply(Action<MessageBuilder> configure, bool applyPayload)
         {
-            var draft = new MessageBuilder(this.Message.Id, this.Message.Version);
+            var draft = new MessageBuilder(this.Message.Id, this.Message.Version, this.queue.serializer);
             configure(draft);
 
             var now = this.queue.clock.UtcNow;
@@ -274,7 +287,7 @@ public sealed class InMemoryMessageQueue(IClock clock) : IMessageQueue
                     e => this.IsHeldBy(e, now)
                         ? e with
                         {
-                            Payload = applyPayload && draft.PayloadSet ? draft.Payload : e.Payload,
+                            Payload = applyPayload && draft.PayloadSet ? draft.Payload! : e.Payload,
                             ExpiresAt = draft.ExpiresAtSet ? draft.ExpiresAt : e.ExpiresAt,
                             InvisibleBefore = draft.InvisibleBeforeSet ? draft.InvisibleBefore : e.InvisibleBefore,
                             Tags = draft.TagsSet ? draft.Tags! : e.Tags,
@@ -287,7 +300,7 @@ public sealed class InMemoryMessageQueue(IClock clock) : IMessageQueue
                 throw NotHeld();
             }
 
-            this.Message = Snapshot(updated);
+            this.Message = this.queue.Snapshot(updated);
             return Task.CompletedTask;
         }
 
