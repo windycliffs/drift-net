@@ -8,12 +8,14 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="MessagePack" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="WindyCliffs.Clock" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Drift.Abstractions\Drift.Abstractions.csproj" />
+    <ProjectReference Include="..\Drift\Drift.csproj" />
   </ItemGroup>
 </Project>

@@ -30,7 +30,7 @@ jobs:
     - name: Test
       run: dotnet test -c Release --no-build repo.slnx
     - name: Pack nugets
-      run: dotnet pack -c Release --no-build Drift.Abstractions/Drift.Abstractions.csproj --output out/
+      run: dotnet pack -c Release --no-build Drift/Drift.csproj --output out/
     - name: NuGet login (OIDC -> temporary API key)
       # Exchanges the GitHub OIDC token for a short-lived (1-hour) nuget.org API
       # key via trusted publishing — no long-lived secret. Run just before push.

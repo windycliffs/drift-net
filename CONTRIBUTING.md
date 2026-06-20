@@ -81,7 +81,7 @@ Whenever you bump the version, add a new `## [X.Y.Z]` section at the top of
 The NuGet package ships a README rendered on nuget.org. It is a separate file
 from the repository-root `README.md` (which targets GitHub readers):
 
-- **Location:** `src/Drift.Abstractions/README.md`.
+- **Location:** `src/Drift/README.md`.
 - **How it is included:** the library `.csproj` sets
   `<PackageReadmeFile>README.md</PackageReadmeFile>` and packs the file via a
   `<None Include="README.md" Pack="true" PackagePath="/" />` item. The file must

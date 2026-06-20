@@ -249,3 +249,8 @@ dotnet_style_qualification_for_event = true:warning
 dotnet_naming_rule.interface_should_be_begins_with_i.severity = warning
 dotnet_naming_rule.types_should_be_pascal_case.severity = warning
 dotnet_naming_rule.non_field_members_should_be_pascal_case.severity = warning
+
+# --- Project analyzer configuration ---
+# "Queue" is the correct domain term for the message-queue abstraction (IMessageQueue,
+# InMemoryMessageQueue), so allow it as a type-name suffix despite CA1711's reserved list.
+dotnet_code_quality.CA1711.allowed_suffixes = Queue
